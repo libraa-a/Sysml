@@ -206,6 +206,11 @@ GET /api/projects/{projectId}/branches/{branch}/export?format=xmi
 
 生成的 HTML、Markdown 和 PDF 会同步保存到 `outputs/`。可通过环境变量 `SYSML_OUTPUT_DIR` 修改输出位置。
 
+PDF 输出支持两种方式：
+
+- 若运行环境安装了 `wkhtmltopdf`，系统会优先调用它渲染 PDF。
+- 若未安装，则自动退回内置 PDF fallback，因此 Docker 和 CI 不依赖额外系统包也可以生成 PDF。
+
 ## 文件管理接口
 
 - `GET /api/files`

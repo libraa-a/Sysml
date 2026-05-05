@@ -4,12 +4,9 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV SYSML_STORAGE=mongodb
 ENV MONGO_URL=mongodb://mongo:27017
+ENV SYSML_PDF_ENGINE=builtin-fallback
 
 WORKDIR /app
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends wkhtmltopdf \
-    && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

@@ -107,3 +107,5 @@ SYSML_OUTPUT_DIR=outputs
 SYSML_FRONTEND_DIST=static
 SYSML_MAX_MODEL_BYTES=10485760
 ```
+
+PDF 生成默认支持内置 fallback，不依赖系统安装 `wkhtmltopdf`。如果运行环境中存在 `wkhtmltopdf`，系统会自动优先使用它。
