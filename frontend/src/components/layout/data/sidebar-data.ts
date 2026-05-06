@@ -5,6 +5,7 @@ import {
   Braces,
   ChartNoAxesCombined,
   FileText,
+  GitBranch,
   LayoutDashboard,
   Network,
   NotebookTabs,
@@ -42,27 +43,37 @@ export const sidebarData: SidebarData = {
       title: 'Workbench',
       items: [
         {
-          title: '总览工作台',
-          url: '/',
+          title: 'Overview',
+          url: '/#model',
           icon: LayoutDashboard,
         },
         {
-          title: '工程流程',
+          title: 'Workflow',
           icon: Workflow,
           items: [
             {
-              title: 'MMS 模型库',
-              url: '/',
+              title: 'MMS Models',
+              url: '/#model',
               icon: Boxes,
             },
             {
-              title: 'VE 图谱视图',
-              url: '/',
+              title: 'VE Graph',
+              url: '/#diagram',
               icon: Network,
             },
             {
-              title: 'DocGen 文档',
-              url: '/',
+              title: 'Trace Matrix',
+              url: '/#trace',
+              icon: Workflow,
+            },
+            {
+              title: 'Versions',
+              url: '/#version',
+              icon: GitBranch,
+            },
+            {
+              title: 'DocGen Docs',
+              url: '/#docgen',
               icon: FileText,
             },
           ],
@@ -73,7 +84,7 @@ export const sidebarData: SidebarData = {
       title: 'Reference',
       items: [
         {
-          title: '接口与文档',
+          title: 'API & Docs',
           icon: ShieldCheck,
           items: [
             {
@@ -82,31 +93,31 @@ export const sidebarData: SidebarData = {
               icon: NotebookTabs,
             },
             {
-              title: 'API 文档',
+              title: 'API Guide',
               url: '/api.md',
               icon: BookOpenText,
             },
             {
-              title: 'MDK 指南',
+              title: 'MDK Guide',
               url: '/mdk.md',
               icon: Waypoints,
             },
           ],
         },
         {
-          title: '示例页面',
+          title: 'Template Pages',
           icon: ChartNoAxesCombined,
           items: [
             {
-              title: '任务模板',
+              title: 'Tasks',
               url: '/tasks',
             },
             {
-              title: '用户模板',
+              title: 'Users',
               url: '/users',
             },
             {
-              title: '应用模板',
+              title: 'Apps',
               url: '/apps',
             },
           ],

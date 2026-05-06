@@ -64,6 +64,8 @@ function NavBadge({ children }: { children: ReactNode }) {
 
 function SidebarMenuLink({ item, href }: { item: NavLink; href: string }) {
   const { setOpenMobile } = useSidebar()
+  const workbenchHash = getWorkbenchHash(item.url)
+
   return (
     <SidebarMenuItem>
       <SidebarMenuButton
@@ -71,11 +73,26 @@ function SidebarMenuLink({ item, href }: { item: NavLink; href: string }) {
         isActive={checkIsActive(href, item)}
         tooltip={item.title}
       >
-        <Link to={item.url} onClick={() => setOpenMobile(false)}>
-          {item.icon && <item.icon />}
-          <span>{item.title}</span>
-          {item.badge && <NavBadge>{item.badge}</NavBadge>}
-        </Link>
+        {workbenchHash ? (
+          <a
+            href={`/${workbenchHash}`}
+            onClick={(event) => {
+              event.preventDefault()
+              openWorkbenchSection(workbenchHash)
+              setOpenMobile(false)
+            }}
+          >
+            {item.icon && <item.icon />}
+            <span>{item.title}</span>
+            {item.badge && <NavBadge>{item.badge}</NavBadge>}
+          </a>
+        ) : (
+          <Link to={item.url} onClick={() => setOpenMobile(false)}>
+            {item.icon && <item.icon />}
+            <span>{item.title}</span>
+            {item.badge && <NavBadge>{item.badge}</NavBadge>}
+          </Link>
+        )}
       </SidebarMenuButton>
     </SidebarMenuItem>
   )
@@ -106,20 +123,42 @@ function SidebarMenuCollapsible({
         </CollapsibleTrigger>
         <CollapsibleContent className='CollapsibleContent'>
           <SidebarMenuSub>
-            {item.items.map((subItem) => (
-              <SidebarMenuSubItem key={subItem.title}>
-                <SidebarMenuSubButton
-                  asChild
-                  isActive={checkIsActive(href, subItem)}
-                >
-                  <Link to={subItem.url} onClick={() => setOpenMobile(false)}>
-                    {subItem.icon && <subItem.icon />}
-                    <span>{subItem.title}</span>
-                    {subItem.badge && <NavBadge>{subItem.badge}</NavBadge>}
-                  </Link>
-                </SidebarMenuSubButton>
-              </SidebarMenuSubItem>
-            ))}
+            {item.items.map((subItem) => {
+              const workbenchHash = getWorkbenchHash(subItem.url)
+
+              return (
+                <SidebarMenuSubItem key={subItem.title}>
+                  <SidebarMenuSubButton
+                    asChild
+                    isActive={checkIsActive(href, subItem)}
+                  >
+                    {workbenchHash ? (
+                      <a
+                        href={`/${workbenchHash}`}
+                        onClick={(event) => {
+                          event.preventDefault()
+                          openWorkbenchSection(workbenchHash)
+                          setOpenMobile(false)
+                        }}
+                      >
+                        {subItem.icon && <subItem.icon />}
+                        <span>{subItem.title}</span>
+                        {subItem.badge && <NavBadge>{subItem.badge}</NavBadge>}
+                      </a>
+                    ) : (
+                      <Link
+                        to={subItem.url}
+                        onClick={() => setOpenMobile(false)}
+                      >
+                        {subItem.icon && <subItem.icon />}
+                        <span>{subItem.title}</span>
+                        {subItem.badge && <NavBadge>{subItem.badge}</NavBadge>}
+                      </Link>
+                    )}
+                  </SidebarMenuSubButton>
+                </SidebarMenuSubItem>
+              )
+            })}
           </SidebarMenuSub>
         </CollapsibleContent>
       </SidebarMenuItem>
@@ -153,20 +192,41 @@ function SidebarMenuCollapsedDropdown({
             {item.title} {item.badge ? `(${item.badge})` : ''}
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
-          {item.items.map((sub) => (
-            <DropdownMenuItem key={`${sub.title}-${sub.url}`} asChild>
-              <Link
-                to={sub.url}
-                className={`${checkIsActive(href, sub) ? 'bg-secondary' : ''}`}
-              >
-                {sub.icon && <sub.icon />}
-                <span className='max-w-52 text-wrap'>{sub.title}</span>
-                {sub.badge && (
-                  <span className='ms-auto text-xs'>{sub.badge}</span>
+          {item.items.map((sub) => {
+            const workbenchHash = getWorkbenchHash(sub.url)
+
+            return (
+              <DropdownMenuItem key={`${sub.title}-${sub.url}`} asChild>
+                {workbenchHash ? (
+                  <a
+                    href={`/${workbenchHash}`}
+                    className={`${checkIsActive(href, sub) ? 'bg-secondary' : ''}`}
+                    onClick={(event) => {
+                      event.preventDefault()
+                      openWorkbenchSection(workbenchHash)
+                    }}
+                  >
+                    {sub.icon && <sub.icon />}
+                    <span className='max-w-52 text-wrap'>{sub.title}</span>
+                    {sub.badge && (
+                      <span className='ms-auto text-xs'>{sub.badge}</span>
+                    )}
+                  </a>
+                ) : (
+                  <Link
+                    to={sub.url}
+                    className={`${checkIsActive(href, sub) ? 'bg-secondary' : ''}`}
+                  >
+                    {sub.icon && <sub.icon />}
+                    <span className='max-w-52 text-wrap'>{sub.title}</span>
+                    {sub.badge && (
+                      <span className='ms-auto text-xs'>{sub.badge}</span>
+                    )}
+                  </Link>
                 )}
-              </Link>
-            </DropdownMenuItem>
-          ))}
+              </DropdownMenuItem>
+            )
+          })}
         </DropdownMenuContent>
       </DropdownMenu>
     </SidebarMenuItem>
@@ -174,6 +234,13 @@ function SidebarMenuCollapsedDropdown({
 }
 
 function checkIsActive(href: string, item: NavItem, mainNav = false) {
+  const workbenchHash = getWorkbenchHash(item.url)
+  if (workbenchHash) {
+    const currentHash =
+      typeof window === 'undefined' ? '' : window.location.hash
+    return href.endsWith(workbenchHash) || currentHash === workbenchHash
+  }
+
   return (
     href === item.url || // /endpint?search=param
     href.split('?')[0] === item.url || // endpoint
@@ -182,4 +249,27 @@ function checkIsActive(href: string, item: NavItem, mainNav = false) {
       href.split('/')[1] !== '' &&
       href.split('/')[1] === item?.url?.split('/')[1])
   )
+}
+
+function getWorkbenchHash(url: NavItem['url'] | undefined) {
+  return typeof url === 'string' && url.startsWith('/#')
+    ? url.slice(1)
+    : ''
+}
+
+function openWorkbenchSection(hash: string) {
+  if (typeof window === 'undefined') return
+
+  const nextUrl = `/${hash}`
+  if (window.location.pathname !== '/') {
+    window.location.assign(nextUrl)
+    return
+  }
+
+  if (window.location.hash === hash) {
+    window.dispatchEvent(new HashChangeEvent('hashchange'))
+    return
+  }
+
+  window.location.hash = hash
 }

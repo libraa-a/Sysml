@@ -1,10 +1,37 @@
 import {
+  useCallback,
   useEffect,
+  lazy,
   useMemo,
+  Suspense,
   useState,
   type FormEvent,
   type ReactNode,
 } from 'react'
+import {
+  addEdge,
+  applyEdgeChanges,
+  applyNodeChanges,
+  Background,
+  BackgroundVariant,
+  Controls,
+  Handle,
+  MarkerType,
+  MiniMap,
+  Position,
+  ReactFlow,
+  reconnectEdge,
+  type Connection,
+  type Edge,
+  type EdgeChange,
+  type Node,
+  type NodeChange,
+  type NodeProps,
+  type OnConnect,
+  type OnEdgesChange,
+  type OnNodesChange,
+  type OnReconnect,
+} from '@xyflow/react'
 import {
   AlertCircle,
   Archive,
@@ -13,6 +40,7 @@ import {
   CheckCircle2,
   Code2,
   Download,
+  Edit3,
   FileText,
   GitBranch,
   GitCommitHorizontal,
@@ -30,6 +58,7 @@ import {
   Search,
   ShieldCheck,
   Trash2,
+  UserCircle,
   Workflow,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -65,6 +94,14 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -90,6 +127,12 @@ import { ConfigDrawer } from '@/components/config-drawer'
 import { Header } from '@/components/layout/header'
 import { Main } from '@/components/layout/main'
 import { ThemeSwitch } from '@/components/theme-switch'
+
+const DocgenTemplateEditor = lazy(() =>
+  import('./docgen-template-editor').then((module) => ({
+    default: module.DocgenTemplateEditor,
+  }))
+)
 
 const defaultTemplate = `# {{model:summary}}
 
@@ -127,13 +170,6 @@ const typeNames: Record<string, string> = {
   View: '视图',
 }
 
-const diagramNames: Record<string, string> = {
-  requirements: '需求追踪图',
-  structure: '结构与接口图',
-  behavior: '行为状态图',
-  all: '全模型图',
-}
-
 const relationNames: Record<string, string> = {
   satisfy: '满足',
   verify: '验证',
@@ -147,11 +183,79 @@ const relationNames: Record<string, string> = {
   constrain: '约束',
 }
 
-const severityNames = {
-  error: '错误',
-  warning: '警告',
-  info: '提示',
+const displayTypeNames: Record<string, string> = {
+  Requirement: 'Requirement',
+  Block: 'Block',
+  Activity: 'Activity',
+  Interface: 'Interface',
+  Port: 'Port',
+  Constraint: 'Constraint',
+  State: 'State',
+  TestCase: 'Test Case',
+  View: 'View',
 }
+
+const displayDiagramNames: Record<string, string> = {
+  requirements: 'Requirements Trace',
+  structure: 'Structure & Interface',
+  behavior: 'Behavior & State',
+  all: 'Full Model Graph',
+}
+
+const displayRelationNames: Record<string, string> = {
+  satisfy: 'Satisfy',
+  verify: 'Verify',
+  refine: 'Refine',
+  compose: 'Compose',
+  expose: 'Expose Port',
+  connect: 'Connect',
+  allocate: 'Allocate',
+  flow: 'Flow',
+  transition: 'Transition',
+  constrain: 'Constrain',
+}
+
+const severityLabels = {
+  error: 'Error',
+  warning: 'Warning',
+  info: 'Info',
+}
+
+const workbenchTabs = ['model', 'diagram', 'trace', 'version', 'docgen'] as const
+
+type WorkbenchTab = (typeof workbenchTabs)[number]
+
+type SaveElementInput = {
+  element: SysmlElement
+  attributesText?: string
+  relationsText?: string
+  successMessage?: string
+  nextSelectedId?: string
+}
+
+type SysmlNodeData = {
+  element: SysmlElement
+  label: string
+  onEdit: (id: string) => void
+}
+
+type SysmlFlowNode = Node<SysmlNodeData, 'sysml'>
+
+type SysmlEdgeData = {
+  relationType: string
+  relationLabel: string
+}
+
+type SysmlFlowEdge = Edge<SysmlEdgeData, 'smoothstep'> & {
+  pathOptions?: {
+    borderRadius?: number
+    offset?: number
+    stepPosition?: number
+  }
+}
+
+const nodeWidth = 230
+const nodeHeight = 116
 
 export function SysmlWorkbench() {
   const [identity, setIdentity] = useState<Identity | null>(() => loadIdentity())
@@ -177,6 +281,9 @@ export function SysmlWorkbench() {
   const [validation, setValidation] = useState<ValidationPayload | null>(null)
   const [diagramType, setDiagramType] = useState('requirements')
   const [diagram, setDiagram] = useState<DiagramPayload | null>(null)
+  const [diagramPositions, setDiagramPositions] = useState<
+    Record<string, { x: number; y: number }>
+  >({})
   const [traceability, setTraceability] = useState<TraceabilityRow[]>([])
   const [commits, setCommits] = useState<Commit[]>([])
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([])
@@ -192,6 +299,9 @@ export function SysmlWorkbench() {
   const [currentDocument, setCurrentDocument] = useState<DocumentRecord | null>(
     null
   )
+  const [activeTab, setActiveTab] = useState<WorkbenchTab>(() =>
+    tabFromHash(window.location.hash)
+  )
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState('')
 
@@ -206,6 +316,18 @@ export function SysmlWorkbench() {
   useEffect(() => {
     bootstrap()
   }, [])
+
+  useEffect(() => {
+    const onHashChange = () => {
+      const nextTab = tabFromHash(window.location.hash)
+      setActiveTab(nextTab)
+      preloadTab(nextTab)
+    }
+
+    onHashChange()
+    window.addEventListener('hashchange', onHashChange)
+    return () => window.removeEventListener('hashchange', onHashChange)
+  }, [projectId, branch])
 
   useEffect(() => {
     if (!projectId) return
@@ -372,6 +494,21 @@ export function SysmlWorkbench() {
     }
   }
 
+  function selectTab(tab: WorkbenchTab) {
+    setActiveTab(tab)
+    preloadTab(tab)
+    const nextHash = `#${tab}`
+    if (window.location.hash !== nextHash) {
+      window.history.replaceState(null, '', nextHash)
+    }
+  }
+
+  function preloadTab(tab: WorkbenchTab) {
+    if (tab === 'trace') void loadTraceability()
+    if (tab === 'version') void loadVersionData()
+    if (tab === 'docgen') void loadDocuments()
+  }
+
   async function handleLogin() {
     setBusy('login')
     try {
@@ -425,39 +562,86 @@ export function SysmlWorkbench() {
     }
   }
 
+  async function persistElement({
+    element,
+    attributesText: nextAttributesText,
+    relationsText: nextRelationsText,
+    successMessage = '模型元素已保存',
+    nextSelectedId,
+  }: SaveElementInput) {
+    if (!projectId || !branch) return
+    const payload = {
+      ...element,
+      id: element.id.trim(),
+      name: element.name.trim(),
+      owner: element.owner?.trim() || '',
+      stereotype: element.stereotype?.trim() || '',
+      description: element.description?.trim() || '',
+      attributes:
+        nextAttributesText === undefined
+          ? element.attributes || {}
+          : parseJson<Record<string, unknown>>(nextAttributesText, '属性 JSON', {}),
+      relations:
+        nextRelationsText === undefined
+          ? element.relations || []
+          : parseJson<Relation[]>(nextRelationsText, '关系 JSON', []),
+    }
+    const isUpdate = Boolean(payload.id)
+    const path = isUpdate
+      ? `/api/projects/${encodeURIComponent(projectId)}/branches/${encodeURIComponent(branch)}/elements/${encodeURIComponent(payload.id)}`
+      : `/api/projects/${encodeURIComponent(projectId)}/branches/${encodeURIComponent(branch)}/elements`
+    const result = await api<{ element: SysmlElement }>(path, {
+      method: isUpdate ? 'PUT' : 'POST',
+      body: JSON.stringify(payload),
+      identity,
+      role,
+    })
+    setSelectedId(nextSelectedId ?? result.element.id)
+    await loadElements()
+    if (successMessage) toast.success(successMessage)
+  }
+
   async function saveElement(event: FormEvent) {
     event.preventDefault()
     if (!projectId || !branch) return
     setBusy('save-element')
     try {
-      const payload = {
-        ...form,
-        id: form.id.trim(),
-        name: form.name.trim(),
-        owner: form.owner?.trim() || '',
-        stereotype: form.stereotype?.trim() || '',
-        description: form.description?.trim() || '',
-        attributes: parseJson<Record<string, unknown>>(attributesText, '属性 JSON', {}),
-        relations: parseJson<Relation[]>(relationsText, '关系 JSON', []),
-      }
-      const isUpdate = Boolean(payload.id)
-      const path = isUpdate
-        ? `/api/projects/${encodeURIComponent(projectId)}/branches/${encodeURIComponent(branch)}/elements/${encodeURIComponent(payload.id)}`
-        : `/api/projects/${encodeURIComponent(projectId)}/branches/${encodeURIComponent(branch)}/elements`
-      const result = await api<{ element: SysmlElement }>(path, {
-        method: isUpdate ? 'PUT' : 'POST',
-        body: JSON.stringify(payload),
-        identity,
-        role,
+      await persistElement({
+        element: form,
+        attributesText,
+        relationsText,
       })
-      setSelectedId(result.element.id)
-      await loadElements()
-      toast.success('模型元素已保存')
     } catch (error) {
       notifyError(error)
     } finally {
       setBusy('')
     }
+  }
+
+  async function updateDiagramElement(
+    element: SysmlElement,
+    successMessage: string,
+    nextSelectedId = element.id
+  ) {
+    if (!projectId || !branch) return
+    setBusy('diagram-edit')
+    try {
+      await persistElement({
+        element,
+        successMessage,
+        nextSelectedId,
+      })
+    } catch (error) {
+      notifyError(error)
+    } finally {
+      setBusy('')
+    }
+  }
+
+  function handleDiagramPositionsChange(
+    positions: Record<string, { x: number; y: number }>
+  ) {
+    setDiagramPositions((current) => ({ ...current, ...positions }))
   }
 
   async function deleteElement() {
@@ -706,35 +890,35 @@ export function SysmlWorkbench() {
 
   const stats = [
     {
-      label: '模型元素',
+      label: 'Elements',
       value: elements.length,
-      detail: `${Object.keys(elementCounts).length} 类 SysML 元素`,
+      detail: `${Object.keys(elementCounts).length} SysML types`,
       icon: Boxes,
     },
     {
-      label: '需求',
+      label: 'Requirements',
       value: elementCounts.Requirement || 0,
       detail: 'Requirement',
       icon: ShieldCheck,
     },
     {
-      label: '模块',
+      label: 'Blocks',
       value: elementCounts.Block || 0,
       detail: 'Block',
       icon: Archive,
     },
     {
-      label: '验证问题',
+      label: 'Validation',
       value:
         (validation?.summary.errors || 0) + (validation?.summary.warnings || 0),
-      detail: `${validation?.summary.errors || 0} 错误 / ${validation?.summary.warnings || 0} 警告`,
+      detail: `${validation?.summary.errors || 0} errors / ${validation?.summary.warnings || 0} warnings`,
       icon: AlertCircle,
     },
   ]
 
   return (
     <>
-      <Header fixed>
+      <Header fixed className='border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/70'>
         <div className='me-auto min-w-0'>
           <div className='flex items-center gap-2'>
             <span className='truncate text-sm font-semibold'>
@@ -748,202 +932,145 @@ export function SysmlWorkbench() {
             MMS / VE / MDK / DocGen integrated workbench
           </p>
         </div>
+        <IdentityDialog
+          identity={identity}
+          role={role}
+          setRole={setRole}
+          loginForm={loginForm}
+          setLoginForm={setLoginForm}
+          onLogin={handleLogin}
+          onLogout={handleLogout}
+          busy={busy}
+        />
         <ThemeSwitch />
         <ConfigDrawer />
       </Header>
 
-      <Main fluid className='space-y-5'>
+      <Main fluid className='space-y-5 pb-8'>
         {loading ? (
           <div className='flex min-h-[520px] items-center justify-center'>
             <div className='flex items-center gap-3 text-sm text-muted-foreground'>
               <Loader2 className='size-4 animate-spin' />
-              正在加载 SysML 工作台
+              Loading SysML workbench
             </div>
           </div>
         ) : (
           <>
-            <section className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]'>
-              <div className='space-y-4'>
-                <div className='flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between'>
+            <section className='space-y-4'>
+              <div className='rounded-lg border bg-card p-4 shadow-sm'>
+                <div className='flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between'>
                   <div className='min-w-0'>
-                    <h1 className='truncate text-2xl font-bold tracking-tight'>
-                      {project?.name || 'SysML 项目'}
-                    </h1>
+                    <div className='flex flex-wrap items-center gap-2'>
+                      <h1 className='truncate text-2xl font-bold tracking-tight'>
+                        {project?.name || 'SysML Project'}
+                      </h1>
+                      <Badge variant='outline'>{branch}</Badge>
+                      <Badge variant='secondary'>
+                        {branches.find((item) => item.name === branch)?.head ||
+                          'working'}
+                      </Badge>
+                    </div>
                     <p className='mt-1 text-sm text-muted-foreground'>
-                      {project?.organization || '当前项目'} / {branch} /{' '}
-                      {branches.find((item) => item.name === branch)?.head ||
-                        'working'}
+                      {project?.organization || 'Current project'}
                     </p>
                   </div>
-                  <div className='flex flex-wrap gap-2'>
-                    <Button
-                      variant='outline'
-                      onClick={() => exportModel('json')}
-                      disabled={busy === 'export-json'}
-                    >
-                      <Download className='size-4' />
-                      JSON
-                    </Button>
-                    <Button
-                      variant='outline'
-                      onClick={() => exportModel('xmi')}
-                      disabled={busy === 'export-xmi'}
-                    >
-                      <Code2 className='size-4' />
-                      XMI
-                    </Button>
-                    <Button onClick={commitBranch} disabled={busy === 'commit'}>
-                      <GitCommitHorizontal className='size-4' />
-                      提交
-                    </Button>
+                  <div className='grid gap-2 md:grid-cols-[minmax(220px,1fr)_160px_auto] xl:min-w-[720px]'>
+                    <Select value={projectId} onValueChange={setProjectId}>
+                      <SelectTrigger className='w-full'>
+                        <SelectValue placeholder='Select project' />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {projects.map((item) => (
+                          <SelectItem key={item.id} value={item.id}>
+                            {item.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select value={branch} onValueChange={setBranch}>
+                      <SelectTrigger className='w-full'>
+                        <SelectValue placeholder='Select branch' />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {branches.map((item) => (
+                          <SelectItem key={item.name} value={item.name}>
+                            {item.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <div className='flex gap-2'>
+                      <Button
+                        variant='outline'
+                        onClick={() => exportModel('json')}
+                        disabled={busy === 'export-json'}
+                      >
+                        <Download className='size-4' />
+                        JSON
+                      </Button>
+                      <Button
+                        variant='outline'
+                        onClick={() => exportModel('xmi')}
+                        disabled={busy === 'export-xmi'}
+                      >
+                        <Code2 className='size-4' />
+                        XMI
+                      </Button>
+                      <Button onClick={commitBranch} disabled={busy === 'commit'}>
+                        <GitCommitHorizontal className='size-4' />
+                        Commit
+                      </Button>
+                    </div>
                   </div>
-                </div>
-
-                <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>
-                  {stats.map((item) => (
-                    <Card key={item.label}>
-                      <CardHeader className='flex flex-row items-center justify-between space-y-0 pb-2'>
-                        <CardTitle className='text-sm font-medium'>
-                          {item.label}
-                        </CardTitle>
-                        <item.icon className='size-4 text-muted-foreground' />
-                      </CardHeader>
-                      <CardContent>
-                        <div className='text-2xl font-bold'>{item.value}</div>
-                        <p className='mt-1 text-xs text-muted-foreground'>
-                          {item.detail}
-                        </p>
-                      </CardContent>
-                    </Card>
-                  ))}
                 </div>
               </div>
 
-              <Card>
-                <CardHeader>
-                  <CardTitle className='text-base'>会话与项目</CardTitle>
-                  <CardDescription>
-                    登录身份会影响写入、提交和版本操作权限
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className='space-y-4'>
-                  <div className='grid gap-2 sm:grid-cols-2 xl:grid-cols-1'>
-                    <Field label='用户名'>
-                      <Input
-                        value={loginForm.username}
-                        onChange={(event) =>
-                          setLoginForm((current) => ({
-                            ...current,
-                            username: event.target.value,
-                          }))
-                        }
-                      />
-                    </Field>
-                    <Field label='密码'>
-                      <Input
-                        type='password'
-                        value={loginForm.password}
-                        onChange={(event) =>
-                          setLoginForm((current) => ({
-                            ...current,
-                            password: event.target.value,
-                          }))
-                        }
-                      />
-                    </Field>
-                  </div>
-                  <div className='flex flex-wrap gap-2'>
-                    <Button onClick={handleLogin} disabled={busy === 'login'}>
-                      {busy === 'login' ? (
-                        <Loader2 className='size-4 animate-spin' />
-                      ) : (
-                        <LogIn className='size-4' />
-                      )}
-                      登录
-                    </Button>
-                    <Button variant='outline' onClick={handleLogout}>
-                      <LogOut className='size-4' />
-                      退出
-                    </Button>
-                    <Badge variant='secondary'>
-                      {identity?.display || identity?.username || '未登录'} /{' '}
-                      {identity?.role || role}
-                    </Badge>
-                  </div>
-                  <Separator />
-                  <div className='grid gap-3'>
-                    <Field label='项目'>
-                      <Select value={projectId} onValueChange={setProjectId}>
-                        <SelectTrigger className='w-full'>
-                          <SelectValue placeholder='选择项目' />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {projects.map((item) => (
-                            <SelectItem key={item.id} value={item.id}>
-                              {item.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </Field>
-                    <Field label='分支'>
-                      <Select value={branch} onValueChange={setBranch}>
-                        <SelectTrigger className='w-full'>
-                          <SelectValue placeholder='选择分支' />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {branches.map((item) => (
-                            <SelectItem key={item.name} value={item.name}>
-                              {item.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </Field>
-                    <Field label='请求角色'>
-                      <Select
-                        value={role}
-                        onValueChange={(value) =>
-                          setRole(value as 'admin' | 'author' | 'reader')
-                        }
-                      >
-                        <SelectTrigger className='w-full'>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value='author'>author</SelectItem>
-                          <SelectItem value='reader'>reader</SelectItem>
-                          <SelectItem value='admin'>admin</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </Field>
-                  </div>
-                </CardContent>
-              </Card>
+              <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>
+                {stats.map((item) => (
+                  <Card key={item.label} className='shadow-sm'>
+                    <CardHeader className='flex flex-row items-center justify-between space-y-0 pb-2'>
+                      <CardTitle className='text-sm font-medium'>
+                        {item.label}
+                      </CardTitle>
+                      <item.icon className='size-4 text-muted-foreground' />
+                    </CardHeader>
+                    <CardContent>
+                      <div className='text-2xl font-bold'>{item.value}</div>
+                      <p className='mt-1 text-xs text-muted-foreground'>
+                        {item.detail}
+                      </p>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
             </section>
 
-            <Tabs defaultValue='model' className='space-y-4'>
-              <div className='overflow-x-auto pb-1'>
-                <TabsList>
+            <Tabs
+              value={activeTab}
+              onValueChange={(value) => selectTab(value as WorkbenchTab)}
+              className='space-y-4'
+            >
+              <div className='sticky top-16 z-20 overflow-x-auto border-b bg-background/95 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/75'>
+                <TabsList className='h-10'>
                   <TabsTrigger value='model'>
                     <LayoutDashboard className='size-4' />
-                    模型
+                    Model
                   </TabsTrigger>
                   <TabsTrigger value='diagram'>
                     <Network className='size-4' />
-                    图谱
+                    Graph
                   </TabsTrigger>
-                  <TabsTrigger value='trace' onClick={loadTraceability}>
+                  <TabsTrigger value='trace'>
                     <Workflow className='size-4' />
-                    追踪
+                    Trace
                   </TabsTrigger>
-                  <TabsTrigger value='version' onClick={loadVersionData}>
+                  <TabsTrigger value='version'>
                     <GitBranch className='size-4' />
-                    版本
+                    Versions
                   </TabsTrigger>
-                  <TabsTrigger value='docgen' onClick={loadDocuments}>
+                  <TabsTrigger value='docgen'>
                     <FileText className='size-4' />
-                    文档
+                    Docs
                   </TabsTrigger>
                 </TabsList>
               </div>
@@ -984,6 +1111,10 @@ export function SysmlWorkbench() {
                   selectedId={selectedId}
                   setSelectedId={setSelectedId}
                   onRefresh={loadDiagram}
+                  onSaveElement={updateDiagramElement}
+                  diagramPositions={diagramPositions}
+                  onDiagramPositionsChange={handleDiagramPositionsChange}
+                  busy={busy}
                 />
               </TabsContent>
 
@@ -1026,6 +1157,8 @@ export function SysmlWorkbench() {
                 <DocgenTab
                   template={template}
                   setTemplate={setTemplate}
+                  elements={elements}
+                  validation={validation}
                   documents={documents}
                   currentDocument={currentDocument}
                   onReset={() => setTemplate(defaultTemplate)}
@@ -1068,6 +1201,122 @@ type ModelTabProps = {
   onSave: (event: FormEvent) => void
   onAddRelation: () => void
   busy: string
+}
+
+function IdentityDialog({
+  identity,
+  role,
+  setRole,
+  loginForm,
+  setLoginForm,
+  onLogin,
+  onLogout,
+  busy,
+}: {
+  identity: Identity | null
+  role: Identity['role']
+  setRole: (role: Identity['role']) => void
+  loginForm: { username: string; password: string }
+  setLoginForm: React.Dispatch<
+    React.SetStateAction<{ username: string; password: string }>
+  >
+  onLogin: () => void
+  onLogout: () => void
+  busy: string
+}) {
+  const signedName = identity?.display || identity?.username || 'Guest'
+  const signedRole = identity?.role || role
+
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button variant='outline' className='gap-2'>
+          <UserCircle className='size-4' />
+          <span className='hidden sm:inline'>{signedName}</span>
+          <Badge variant='secondary' className='rounded-sm'>
+            {signedRole}
+          </Badge>
+        </Button>
+      </DialogTrigger>
+      <DialogContent className='sm:max-w-[520px]'>
+        <DialogHeader>
+          <DialogTitle>Account & Access</DialogTitle>
+          <DialogDescription>
+            Identity controls model writes, commits, rollback, and branch merge permissions.
+          </DialogDescription>
+        </DialogHeader>
+        <div className='rounded-lg border bg-muted/30 p-4'>
+          <div className='flex items-center gap-3'>
+            <div className='flex size-11 items-center justify-center rounded-lg bg-primary text-sm font-semibold text-primary-foreground'>
+              {(identity?.username || 'SD').slice(0, 2).toUpperCase()}
+            </div>
+            <div className='min-w-0'>
+              <div className='truncate font-medium'>{signedName}</div>
+              <div className='text-sm text-muted-foreground'>
+                {identity?.username || 'Guest'} / {signedRole}
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className='grid gap-4 sm:grid-cols-2'>
+          <Field label='Username'>
+            <Input
+              value={loginForm.username}
+              onChange={(event) =>
+                setLoginForm((current) => ({
+                  ...current,
+                  username: event.target.value,
+                }))
+              }
+            />
+          </Field>
+          <Field label='Password'>
+            <Input
+              type='password'
+              value={loginForm.password}
+              onChange={(event) =>
+                setLoginForm((current) => ({
+                  ...current,
+                  password: event.target.value,
+                }))
+              }
+            />
+          </Field>
+        </div>
+        <Field label='Request role'>
+          <Select
+            value={role}
+            onValueChange={(value) =>
+              setRole(value as 'admin' | 'author' | 'reader')
+            }
+          >
+            <SelectTrigger className='w-full'>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value='author'>author</SelectItem>
+              <SelectItem value='reader'>reader</SelectItem>
+              <SelectItem value='admin'>admin</SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
+        <div className='flex flex-wrap justify-end gap-2'>
+          <Button variant='outline' onClick={onLogout}>
+            <LogOut className='size-4' />
+            Sign out
+          </Button>
+          <Button onClick={onLogin} disabled={busy === 'login'}>
+            {busy === 'login' ? (
+              <Loader2 className='size-4 animate-spin' />
+            ) : (
+              <LogIn className='size-4' />
+            )}
+            Sign in
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
 }
 
 function ModelTab(props: ModelTabProps) {
@@ -1302,7 +1551,7 @@ function ValidationPanel({ validation }: { validation: ValidationPayload | null 
               >
                 <AlertCircle className='size-4' />
                 <AlertTitle>
-                  {severityNames[issue.severity]} / {issue.element_id}
+                  {severityLabels[issue.severity]} / {issue.element_id}
                 </AlertTitle>
                 <AlertDescription>{issue.message}</AlertDescription>
               </Alert>
@@ -1328,6 +1577,16 @@ type DiagramTabProps = {
   selectedId: string
   setSelectedId: (id: string) => void
   onRefresh: () => void
+  onSaveElement: (
+    element: SysmlElement,
+    successMessage: string,
+    nextSelectedId?: string
+  ) => void
+  diagramPositions: Record<string, { x: number; y: number }>
+  onDiagramPositionsChange: (
+    positions: Record<string, { x: number; y: number }>
+  ) => void
+  busy: string
 }
 
 function DiagramTab(props: DiagramTabProps) {
@@ -1347,7 +1606,7 @@ function DiagramTab(props: DiagramTabProps) {
               <SelectContent>
                 {Object.keys(props.metamodel?.diagram_types || {}).map((type) => (
                   <SelectItem key={type} value={type}>
-                    {diagramNames[type] || type}
+                    {displayDiagramNames[type] || type}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -1386,22 +1645,28 @@ function DiagramTab(props: DiagramTabProps) {
         <CardHeader>
           <div className='flex items-center justify-between gap-3'>
             <div>
-              <CardTitle>{diagramNames[props.diagramType] || '模型图谱'}</CardTitle>
+              <CardTitle>
+                {displayDiagramNames[props.diagramType] || 'Model Graph'}
+              </CardTitle>
               <CardDescription>
                 {props.diagram?.nodes.length || 0} 节点 / {props.diagram?.edges.length || 0} 关系
               </CardDescription>
             </div>
-            <Badge variant='secondary'>SVG</Badge>
+            <Badge variant='secondary'>React Flow</Badge>
           </div>
         </CardHeader>
         <CardContent className='p-0'>
-          <ScrollArea orientation='horizontal' className='h-[650px] bg-muted/30'>
-            <DiagramCanvas
-              diagram={props.diagram}
-              selectedId={props.selectedId}
-              onSelect={props.setSelectedId}
-            />
-          </ScrollArea>
+          <DiagramCanvas
+            diagram={props.diagram}
+            elements={props.elements}
+            selectedId={props.selectedId}
+            onSelect={props.setSelectedId}
+            metamodel={props.metamodel}
+            onSaveElement={props.onSaveElement}
+            diagramPositions={props.diagramPositions}
+            onDiagramPositionsChange={props.onDiagramPositionsChange}
+            busy={props.busy}
+          />
         </CardContent>
       </Card>
     </div>
@@ -1410,118 +1675,630 @@ function DiagramTab(props: DiagramTabProps) {
 
 function DiagramCanvas({
   diagram,
+  elements,
   selectedId,
   onSelect,
+  metamodel,
+  onSaveElement,
+  diagramPositions,
+  onDiagramPositionsChange,
+  busy,
 }: {
   diagram: DiagramPayload | null
+  elements: SysmlElement[]
   selectedId: string
   onSelect: (id: string) => void
+  metamodel: Metamodel | null
+  onSaveElement: (
+    element: SysmlElement,
+    successMessage: string,
+    nextSelectedId?: string
+  ) => void
+  diagramPositions: Record<string, { x: number; y: number }>
+  onDiagramPositionsChange: (
+    positions: Record<string, { x: number; y: number }>
+  ) => void
+  busy: string
 }) {
+  const [nodes, setNodes] = useState<SysmlFlowNode[]>([])
+  const [edges, setEdges] = useState<SysmlFlowEdge[]>([])
+  const [selectedEdgeId, setSelectedEdgeId] = useState('')
+  const [edgeRelationType, setEdgeRelationType] = useState('')
+  const relationTypes = Object.keys(metamodel?.relation_labels || relationNames)
+  const elementMap = useMemo(
+    () => new Map(elements.map((element) => [element.id, element])),
+    [elements]
+  )
+
+  const editNode = useCallback(
+    (id: string) => {
+      const element = elementMap.get(id)
+      if (!element) return
+      const nextName = window.prompt('节点名称', element.name || '')
+      if (nextName === null) return
+      const nextDescription = window.prompt(
+        '节点描述',
+        element.description || ''
+      )
+      if (nextDescription === null) return
+      onSaveElement(
+        {
+          ...element,
+          name: nextName.trim() || element.name,
+          description: nextDescription.trim(),
+        },
+        '节点已更新',
+        element.id
+      )
+    },
+    [elementMap, onSaveElement]
+  )
+
+  const nodeTypes = useMemo(() => ({ sysml: SysmlFlowNodeCard }), [])
+
+  useEffect(() => {
+    if (!diagram) {
+      setNodes([])
+      setEdges([])
+      setSelectedEdgeId('')
+      return
+    }
+
+    setNodes(
+      layoutDiagramNodes(diagram, elements).map((node) => {
+        const element = elementMap.get(node.id)
+        const position = diagramPositions[node.id] || node.position
+        return {
+          id: node.id,
+          type: 'sysml',
+          position,
+          sourcePosition: Position.Right,
+          targetPosition: Position.Left,
+          width: nodeWidth,
+          height: nodeHeight,
+          selected: selectedId === node.id,
+          data: {
+            element: element || {
+              id: node.id,
+              type: node.type,
+              name: node.name,
+              stereotype: node.type.toLowerCase(),
+              description: '',
+              owner: '',
+              attributes: {},
+              relations: [],
+            },
+            label: node.label,
+            onEdit: editNode,
+          },
+        }
+      })
+    )
+    const edgeCounts = new Map<string, number>()
+    setEdges(
+      diagram.edges.map((edge, index) => {
+        const pairKey = `${edge.source}->${edge.target}`
+        const parallelIndex = edgeCounts.get(pairKey) || 0
+        edgeCounts.set(pairKey, parallelIndex + 1)
+        return {
+          id: edgeId(edge.source, edge.target, edge.type, index),
+          source: edge.source,
+          target: edge.target,
+          type: 'smoothstep',
+          label: labelRelation(edge.type),
+          sourceHandle: 'out',
+          targetHandle: 'in',
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            width: 18,
+            height: 18,
+          },
+          reconnectable: true,
+          style: {
+            stroke: edgeColor(edge.type),
+            strokeWidth: 1.6,
+          },
+          labelStyle: {
+            fill: 'var(--muted-foreground)',
+            fontSize: 12,
+            fontWeight: 500,
+          },
+          labelBgStyle: {
+            fill: 'var(--background)',
+            fillOpacity: 0.92,
+          },
+          labelBgPadding: [8, 4],
+          labelBgBorderRadius: 4,
+          pathOptions: {
+            borderRadius: 12,
+            offset: 32 + parallelIndex * 18,
+          },
+          data: {
+            relationType: edge.type,
+            relationLabel: labelRelation(edge.type),
+          },
+        }
+      })
+    )
+  }, [diagram, diagramPositions, editNode, elementMap, selectedId])
+
+  const selectedEdge = edges.find((edge) => edge.id === selectedEdgeId)
+
+  useEffect(() => {
+    setEdgeRelationType(selectedEdge?.data?.relationType || relationTypes[0] || '')
+  }, [relationTypes, selectedEdge?.data?.relationType])
+
+  const onNodesChange: OnNodesChange<SysmlFlowNode> = useCallback(
+    (changes: NodeChange<SysmlFlowNode>[]) => {
+      setNodes((current) => applyNodeChanges(changes, current))
+      const moved = changes.reduce<Record<string, { x: number; y: number }>>(
+        (acc, change) => {
+          if (change.type === 'position' && change.position) {
+            acc[change.id] = change.position
+          }
+          return acc
+        },
+        {}
+      )
+      if (Object.keys(moved).length) onDiagramPositionsChange(moved)
+    },
+    [onDiagramPositionsChange]
+  )
+
+  const onEdgesChange: OnEdgesChange<SysmlFlowEdge> = useCallback(
+    (changes: EdgeChange<SysmlFlowEdge>[]) => {
+      const removed = changes.find((change) => change.type === 'remove')
+      if (removed) {
+        const edge = edges.find((item) => item.id === removed.id)
+        if (edge) removeRelationEdge(edge, elementMap, onSaveElement)
+        if (selectedEdgeId === removed.id) setSelectedEdgeId('')
+      }
+      setEdges((current) => applyEdgeChanges(changes, current))
+    },
+    [edges, elementMap, onSaveElement, selectedEdgeId]
+  )
+
+  const onConnect: OnConnect = useCallback(
+    (connection: Connection) => {
+      if (!connection.source || !connection.target) return
+      const relationType = edgeRelationType || relationTypes[0] || 'satisfy'
+      const source = elementMap.get(connection.source)
+      if (!source) return
+      const relationExists = (source.relations || []).some(
+        (relation) =>
+          relation.type === relationType && relation.target === connection.target
+      )
+      if (relationExists) {
+        toast.info('该关系已存在')
+        return
+      }
+      const nextEdge: SysmlFlowEdge = {
+        id: edgeId(connection.source, connection.target, relationType, edges.length),
+        source: connection.source,
+        target: connection.target,
+        type: 'smoothstep',
+        label: labelRelation(relationType),
+        sourceHandle: connection.sourceHandle || 'out',
+        targetHandle: connection.targetHandle || 'in',
+        markerEnd: { type: MarkerType.ArrowClosed },
+        reconnectable: true,
+        style: {
+          stroke: edgeColor(relationType),
+          strokeWidth: 1.6,
+        },
+        labelStyle: {
+          fill: 'var(--muted-foreground)',
+          fontSize: 12,
+          fontWeight: 500,
+        },
+        labelBgStyle: {
+          fill: 'var(--background)',
+          fillOpacity: 0.92,
+        },
+        labelBgPadding: [8, 4],
+        labelBgBorderRadius: 4,
+        pathOptions: {
+          borderRadius: 12,
+          offset: 32,
+        },
+        data: {
+          relationType,
+          relationLabel: labelRelation(relationType),
+        },
+      }
+      setEdges((current) => addEdge(nextEdge, current))
+      onSaveElement(
+        {
+          ...source,
+          relations: [
+            ...(source.relations || []),
+            { type: relationType, target: connection.target },
+          ],
+        },
+        '关系已添加',
+        source.id
+      )
+    },
+    [edgeRelationType, edges.length, elementMap, onSaveElement, relationTypes]
+  )
+
+  const onReconnect: OnReconnect<SysmlFlowEdge> = useCallback(
+    (oldEdge, connection) => {
+      if (!connection.source || !connection.target) return
+      const relationType = oldEdge.data?.relationType || edgeRelationType || 'satisfy'
+      const oldSource = elementMap.get(oldEdge.source)
+      const nextSource = elementMap.get(connection.source)
+      if (!oldSource || !nextSource) return
+      setEdges((current) => reconnectEdge(oldEdge, connection, current))
+      const withoutOldRelation = (oldSource.relations || []).filter(
+        (relation) =>
+          !(
+            relation.type === relationType &&
+            relation.target === oldEdge.target
+          )
+      )
+      if (oldSource.id === nextSource.id) {
+        onSaveElement(
+          {
+            ...oldSource,
+            relations: [
+              ...withoutOldRelation,
+              { type: relationType, target: connection.target },
+            ],
+          },
+          '关系已重连',
+          oldSource.id
+        )
+        return
+      }
+      onSaveElement(
+        { ...oldSource, relations: withoutOldRelation },
+        '原关系已移除',
+        nextSource.id
+      )
+      window.setTimeout(() => {
+        onSaveElement(
+          {
+            ...nextSource,
+            relations: [
+              ...(nextSource.relations || []),
+              { type: relationType, target: connection.target },
+            ],
+          },
+          '关系已重连',
+          nextSource.id
+        )
+      }, 0)
+    },
+    [edgeRelationType, elementMap, onSaveElement]
+  )
+
   if (!diagram || !diagram.nodes.length) {
-    return <EmptyState title='暂无图谱' description='当前模型没有可绘制的节点' />
+    return (
+      <div className='h-[650px] bg-muted/30'>
+        <EmptyState title='暂无图谱' description='当前模型没有可绘制的节点' />
+      </div>
+    )
   }
-  const width = Math.max(...diagram.nodes.map((node) => node.x + node.width)) + 100
-  const height = Math.max(...diagram.nodes.map((node) => node.y + node.height)) + 100
-  const nodeMap = new Map(diagram.nodes.map((node) => [node.id, node]))
 
   return (
-    <svg
-      className='min-h-full min-w-full'
-      width={width}
-      height={height}
-      viewBox={`0 0 ${width} ${height}`}
-      role='img'
-      aria-label={diagramNames[diagram.type] || diagram.label}
+    <div className='h-[720px] bg-muted/30'>
+      <ReactFlow<SysmlFlowNode, SysmlFlowEdge>
+        nodes={nodes}
+        edges={edges}
+        nodeTypes={nodeTypes}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onConnect={onConnect}
+        onReconnect={onReconnect}
+        onNodeClick={(_, node) => onSelect(node.id)}
+        onNodeDoubleClick={(_, node) => editNode(node.id)}
+        onEdgeClick={(_, edge) => {
+          setSelectedEdgeId(edge.id)
+          setEdgeRelationType(edge.data?.relationType || relationTypes[0] || '')
+        }}
+        fitView
+        fitViewOptions={{ padding: 0.2 }}
+        minZoom={0.2}
+        maxZoom={2.5}
+        panOnDrag
+        zoomOnScroll
+        zoomOnPinch
+        nodesDraggable
+        nodesConnectable
+        edgesReconnectable
+        connectionRadius={32}
+        defaultEdgeOptions={{
+          type: 'smoothstep',
+          markerEnd: { type: MarkerType.ArrowClosed },
+          interactionWidth: 24,
+        }}
+        className='sysml-flow'
+      >
+        <Background
+          variant={BackgroundVariant.Dots}
+          gap={22}
+          size={1.2}
+          color='var(--border)'
+        />
+        <MiniMap
+          pannable
+          zoomable
+          nodeBorderRadius={8}
+          nodeColor={(node) =>
+            node.selected ? 'var(--primary)' : 'var(--muted-foreground)'
+          }
+          maskColor='color-mix(in oklch, var(--background) 70%, transparent)'
+        />
+        <Controls position='bottom-left' />
+        <div className='nodrag nowheel absolute right-3 top-3 z-10 grid w-[280px] gap-3 rounded-md border bg-background/95 p-3 shadow-sm backdrop-blur'>
+          <Field label='新连线类型'>
+            <Select value={edgeRelationType} onValueChange={setEdgeRelationType}>
+              <SelectTrigger className='w-full'>
+                <SelectValue placeholder='选择关系' />
+              </SelectTrigger>
+              <SelectContent>
+                {relationTypes.map((type) => (
+                  <SelectItem key={type} value={type}>
+                    {labelRelation(type)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+          {selectedEdge ? (
+            <div className='grid gap-2 border-t pt-3'>
+              <div className='min-w-0 text-xs text-muted-foreground'>
+                已选关系：{selectedEdge.source} {'->'} {selectedEdge.target}
+              </div>
+              <div className='flex gap-2'>
+                <Button
+                  variant='outline'
+                  size='sm'
+                  disabled={busy === 'diagram-edit'}
+                  onClick={() => {
+                    const source = elementMap.get(selectedEdge.source)
+                    if (!source) return
+                    const oldType = selectedEdge.data?.relationType || ''
+                    const nextRelations = (source.relations || []).map(
+                      (relation) =>
+                        relation.type === oldType &&
+                        relation.target === selectedEdge.target
+                          ? { ...relation, type: edgeRelationType }
+                          : relation
+                    )
+                    onSaveElement(
+                      { ...source, relations: nextRelations },
+                      '关系类型已更新',
+                      source.id
+                    )
+                  }}
+                >
+                  保存类型
+                </Button>
+                <Button
+                  variant='destructive'
+                  size='sm'
+                  disabled={busy === 'diagram-edit'}
+                  onClick={() => {
+                    removeRelationEdge(selectedEdge, elementMap, onSaveElement)
+                    setEdges((current) =>
+                      current.filter((edge) => edge.id !== selectedEdge.id)
+                    )
+                    setSelectedEdgeId('')
+                  }}
+                >
+                  删除关系
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </ReactFlow>
+    </div>
+  )
+}
+
+function SysmlFlowNodeCard({ data, selected }: NodeProps<SysmlFlowNode>) {
+  const element = data.element
+  return (
+    <div
+      className={cn(
+        'group w-[230px] rounded-md border bg-background shadow-sm transition-all',
+        selected && 'border-primary shadow-md ring-2 ring-ring/25'
+      )}
     >
-      <defs>
-        <marker
-          id='sysml-arrow'
-          markerHeight='10'
-          markerWidth='10'
-          orient='auto'
-          refX='9'
-          refY='3'
-        >
-          <path d='M0,0 L0,6 L9,3 z' fill='var(--muted-foreground)' />
-        </marker>
-      </defs>
-      {diagram.edges.map((edge, index) => {
-        const source = nodeMap.get(edge.source)
-        const target = nodeMap.get(edge.target)
-        if (!source || !target) return null
-        const x1 = source.x + source.width
-        const y1 = source.y + source.height / 2
-        const x2 = target.x
-        const y2 = target.y + target.height / 2
-        const midX = (x1 + x2) / 2
-        return (
-          <g key={`${edge.source}-${edge.target}-${edge.type}-${index}`}>
-            <path
-              d={`M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}`}
-              fill='none'
-              stroke='var(--muted-foreground)'
-              strokeWidth='1.5'
-              markerEnd='url(#sysml-arrow)'
-            />
-            <text
-              x={midX}
-              y={(y1 + y2) / 2 - 6}
-              textAnchor='middle'
-              className='fill-muted-foreground text-[12px]'
-              paintOrder='stroke'
-              stroke='var(--background)'
-              strokeWidth='5'
+      <Handle
+        type='target'
+        id='in'
+        position={Position.Left}
+        className='!h-3 !w-3 !border-2 !border-background !bg-primary'
+      />
+      <div className='grid w-full gap-2 p-3'>
+        <div className='flex min-w-0 items-start justify-between gap-2'>
+          <span className='truncate font-mono text-xs font-semibold'>
+            {element.id}
+          </span>
+          <div className='flex shrink-0 items-center gap-1'>
+            <span
+              className='rounded-sm px-1.5 py-0.5 text-[10px] font-medium'
+              style={{
+                background: `${nodeAccentColor(element.type)}22`,
+                color: nodeAccentColor(element.type),
+              }}
             >
-              {labelRelation(edge.type)}
-            </text>
-          </g>
-        )
-      })}
-      {diagram.nodes.map((node) => (
-        <g
-          key={node.id}
-          role='button'
-          tabIndex={0}
-          onClick={() => onSelect(node.id)}
-          className='cursor-pointer'
-        >
-          <rect
-            x={node.x}
-            y={node.y}
-            width={node.width}
-            height={node.height}
-            rx='8'
-            className={cn(
-              'fill-background stroke-border drop-shadow-sm',
-              selectedId === node.id && 'stroke-primary'
-            )}
-            strokeWidth={selectedId === node.id ? 2 : 1}
-          />
-          <text
-            x={node.x + 14}
-            y={node.y + 24}
-            className='fill-foreground font-mono text-[13px] font-semibold'
-          >
-            {node.id}
-          </text>
-          <text
-            x={node.x + 14}
-            y={node.y + 45}
-            className='fill-foreground text-[13px]'
-          >
-            {truncate(node.name || '未命名', 14)}
-          </text>
-          <text
-            x={node.x + node.width - 12}
-            y={node.y + 24}
-            textAnchor='end'
-            className='fill-muted-foreground text-[11px]'
-          >
-            {labelType(node.type)}
-          </text>
-        </g>
-      ))}
-    </svg>
+              {labelType(element.type)}
+            </span>
+            <button
+              type='button'
+              className='nodrag rounded-sm p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground group-hover:opacity-100'
+              onClick={() => data.onEdit(element.id)}
+              title='编辑节点'
+            >
+              <Edit3 className='size-3.5' />
+            </button>
+          </div>
+        </div>
+        <div className='line-clamp-2 text-sm font-medium'>
+          {element.name || '未命名元素'}
+        </div>
+        <p className='line-clamp-2 text-xs text-muted-foreground'>
+          {element.description || data.label || '暂无描述'}
+        </p>
+      </div>
+      <Handle
+        type='source'
+        id='out'
+        position={Position.Right}
+        className='!h-3 !w-3 !border-2 !border-background !bg-primary'
+      />
+    </div>
+  )
+}
+
+function layoutDiagramNodes(diagram: DiagramPayload, elements: SysmlElement[]) {
+  const elementMap = new Map(elements.map((element) => [element.id, element]))
+  const incoming = new Map<string, number>()
+  const outgoing = new Map<string, number>()
+  diagram.nodes.forEach((node) => {
+    incoming.set(node.id, 0)
+    outgoing.set(node.id, 0)
+  })
+  diagram.edges.forEach((edge) => {
+    outgoing.set(edge.source, (outgoing.get(edge.source) || 0) + 1)
+    incoming.set(edge.target, (incoming.get(edge.target) || 0) + 1)
+  })
+
+  const columns = buildDiagramColumns(diagram.type)
+  const columnIndex = new Map<string, number>()
+  columns.forEach((types, index) => {
+    types.forEach((type) => columnIndex.set(type, index))
+  })
+
+  const grouped = new Map<number, DiagramPayload['nodes']>()
+  diagram.nodes.forEach((node) => {
+    const element = elementMap.get(node.id)
+    const type = element?.type || node.type
+    const fallbackColumn = Math.max(
+      0,
+      Math.min(columns.length - 1, Math.round((node.x - 90) / 230))
+    )
+    const column = columnIndex.get(type) ?? fallbackColumn
+    const items = grouped.get(column) || []
+    items.push(node)
+    grouped.set(column, items)
+  })
+
+  return diagram.nodes.map((node) => {
+    const element = elementMap.get(node.id)
+    const type = element?.type || node.type
+    const fallbackColumn = Math.max(
+      0,
+      Math.min(columns.length - 1, Math.round((node.x - 90) / 230))
+    )
+    const column = columnIndex.get(type) ?? fallbackColumn
+    const peers = (grouped.get(column) || []).sort((left, right) => {
+      const leftScore =
+        (incoming.get(left.id) || 0) * 2 + (outgoing.get(left.id) || 0)
+      const rightScore =
+        (incoming.get(right.id) || 0) * 2 + (outgoing.get(right.id) || 0)
+      if (rightScore !== leftScore) return rightScore - leftScore
+      return left.id.localeCompare(right.id)
+    })
+    const row = peers.findIndex((peer) => peer.id === node.id)
+    const columnWidth = 330
+    const rowHeight = 148
+    const offset = (column % 2) * 32
+    return {
+      ...node,
+      position: {
+        x: 80 + column * columnWidth,
+        y: 70 + Math.max(row, 0) * rowHeight + offset,
+      },
+    }
+  })
+}
+
+function buildDiagramColumns(diagramType: string) {
+  if (diagramType === 'requirements') {
+    return [
+      ['Requirement'],
+      ['Activity', 'Block', 'Interface'],
+      ['Constraint', 'TestCase'],
+    ]
+  }
+  if (diagramType === 'structure') {
+    return [['Block'], ['Port'], ['Interface'], ['Constraint']]
+  }
+  if (diagramType === 'behavior') {
+    return [['Activity'], ['State'], ['Block']]
+  }
+  return [
+    ['Requirement'],
+    ['Activity'],
+    ['Block'],
+    ['Port', 'Interface'],
+    ['Constraint', 'TestCase', 'State', 'View'],
+  ]
+}
+
+function edgeColor(type: string) {
+  const colors: Record<string, string> = {
+    satisfy: 'oklch(0.55 0.15 150)',
+    verify: 'oklch(0.58 0.15 245)',
+    refine: 'oklch(0.57 0.16 35)',
+    compose: 'oklch(0.5 0.12 260)',
+    expose: 'oklch(0.56 0.13 190)',
+    connect: 'oklch(0.52 0.11 210)',
+    allocate: 'oklch(0.58 0.14 300)',
+    flow: 'oklch(0.6 0.15 70)',
+    transition: 'oklch(0.55 0.16 20)',
+    constrain: 'oklch(0.52 0.13 330)',
+  }
+  return colors[type] || 'var(--muted-foreground)'
+}
+
+function nodeAccentColor(type: string) {
+  const colors: Record<string, string> = {
+    Requirement: 'oklch(0.55 0.15 150)',
+    Block: 'oklch(0.5 0.12 260)',
+    Activity: 'oklch(0.58 0.14 300)',
+    Interface: 'oklch(0.52 0.11 210)',
+    Port: 'oklch(0.56 0.13 190)',
+    Constraint: 'oklch(0.52 0.13 330)',
+    State: 'oklch(0.55 0.16 20)',
+    TestCase: 'oklch(0.58 0.15 245)',
+    View: 'oklch(0.55 0.1 95)',
+  }
+  return colors[type] || 'var(--muted-foreground)'
+}
+
+function edgeId(source: string, target: string, type: string, index: number) {
+  return `${source}--${type}--${target}--${index}`
+}
+
+function removeRelationEdge(
+  edge: SysmlFlowEdge,
+  elementMap: Map<string, SysmlElement>,
+  onSaveElement: (
+    element: SysmlElement,
+    successMessage: string,
+    nextSelectedId?: string
+  ) => void
+) {
+  const source = elementMap.get(edge.source)
+  if (!source) return
+  const relationType = edge.data?.relationType || ''
+  onSaveElement(
+    {
+      ...source,
+      relations: (source.relations || []).filter(
+        (relation) =>
+          !(relation.type === relationType && relation.target === edge.target)
+      ),
+    },
+    '关系已删除',
+    source.id
   )
 }
 
@@ -1873,6 +2650,8 @@ function DiffGroup({ title, items }: { title: string; items: SysmlElement[] }) {
 type DocgenTabProps = {
   template: string
   setTemplate: (value: string) => void
+  elements: SysmlElement[]
+  validation: ValidationPayload | null
   documents: DocumentRecord[]
   currentDocument: DocumentRecord | null
   onReset: () => void
@@ -1898,11 +2677,21 @@ function DocgenTab(props: DocgenTabProps) {
           </div>
         </CardHeader>
         <CardContent className='space-y-4'>
-          <Textarea
-            className='min-h-[360px] font-mono text-xs'
-            value={props.template}
-            onChange={(event) => props.setTemplate(event.target.value)}
-          />
+          <Suspense
+            fallback={
+              <div className='flex h-[420px] items-center justify-center rounded-md border bg-muted/30 text-sm text-muted-foreground'>
+                <Loader2 className='size-4 animate-spin' />
+                Loading editor
+              </div>
+            }
+          >
+            <DocgenTemplateEditor
+              value={props.template}
+              onChange={props.setTemplate}
+              elements={props.elements}
+              validation={props.validation}
+            />
+          </Suspense>
           <div className='flex flex-wrap gap-2'>
             <Button
               onClick={props.onGenerate}
@@ -1998,6 +2787,13 @@ function Field({
   )
 }
 
+function tabFromHash(hash: string): WorkbenchTab {
+  const value = hash.replace(/^#/, '')
+  return workbenchTabs.includes(value as WorkbenchTab)
+    ? (value as WorkbenchTab)
+    : 'model'
+}
+
 function EmptyState({
   title,
   description,
@@ -2047,11 +2843,11 @@ function formatRefs(refs: { id: string; name: string }[]) {
 }
 
 function labelType(type: string) {
-  return typeNames[type] || type
+  return displayTypeNames[type] || typeNames[type] || type
 }
 
 function labelRelation(type: string) {
-  return relationNames[type] || type
+  return displayRelationNames[type] || relationNames[type] || type
 }
 
 function countBy<T>(items: T[], getKey: (item: T) => string) {
@@ -2081,10 +2877,6 @@ function parseJsonSafe<T>(value: string, fallback: T): T {
 function notifyError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error)
   toast.error(message)
-}
-
-function truncate(value: string, length: number) {
-  return value.length > length ? `${value.slice(0, length - 1)}…` : value
 }
 
 function downloadText(filename: string, text: string, type: string) {

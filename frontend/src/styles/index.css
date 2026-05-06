@@ -1,5 +1,6 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
+@import '@xyflow/react/dist/style.css';
 @import './theme.css';
 
 @custom-variant dark (&:is(.dark *));
@@ -66,6 +67,87 @@
 }
 .CollapsibleContent[data-state='closed'] {
   animation: slideUp 300ms ease-out;
+}
+
+.sysml-flow {
+  --xy-node-border-default: transparent;
+  --xy-edge-stroke-default: var(--muted-foreground);
+  --xy-edge-stroke-selected-default: var(--primary);
+  --xy-controls-button-background-color-default: var(--background);
+  --xy-controls-button-background-color-hover-default: var(--muted);
+  --xy-controls-button-color-default: var(--foreground);
+  --xy-controls-button-border-color-default: var(--border);
+  --xy-minimap-background-color-default: color-mix(
+    in oklch,
+    var(--background) 94%,
+    var(--muted)
+  );
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in oklch, var(--background) 90%, var(--muted)) 0,
+      transparent 28%
+    ),
+    var(--background);
+}
+
+.sysml-flow .react-flow__pane {
+  cursor: grab;
+}
+
+.sysml-flow .react-flow__pane.dragging {
+  cursor: grabbing;
+}
+
+.sysml-flow .react-flow__node {
+  font-family: inherit;
+}
+
+.sysml-flow .react-flow__edge-path {
+  filter: drop-shadow(0 1px 1px color-mix(in oklch, var(--background) 70%, transparent));
+}
+
+.sysml-flow .react-flow__edge.selected .react-flow__edge-path {
+  stroke-width: 2.4;
+}
+
+.sysml-flow .react-flow__edge-textbg {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.sysml-flow .react-flow__handle {
+  opacity: 0.8;
+  transition:
+    opacity 150ms ease,
+    transform 150ms ease;
+}
+
+.sysml-flow .react-flow__node:hover .react-flow__handle {
+  opacity: 1;
+  transform: scale(1.15);
+}
+
+.sysml-flow .react-flow__controls,
+.sysml-flow .react-flow__minimap {
+  z-index: 12;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 28px color-mix(in oklch, var(--foreground) 12%, transparent);
+}
+
+.sysml-flow .react-flow__controls {
+  overflow: hidden;
+}
+
+.sysml-flow .react-flow__controls-button {
+  width: 30px;
+  height: 30px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sysml-flow .react-flow__minimap {
+  overflow: hidden;
 }
 
 @keyframes slideDown {
