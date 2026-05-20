@@ -14,8 +14,14 @@
 
 ```powershell
 pip install -r requirements.txt
+cd frontend
+npm install
+npm run build
+cd ..
 python server.py --host 127.0.0.1 --port 8000
 ```
+
+If `frontend/dist` is missing, the service now returns a clear error instead of silently falling back to the legacy `static/` frontend.
 
 打开：
 
@@ -113,7 +119,8 @@ Docker Compose 使用 MongoDB 存储；本地直接运行默认使用 SQLite。�
 ```text
 SYSML_STORAGE=sqlite|mongodb
 SYSML_OUTPUT_DIR=outputs
-SYSML_FRONTEND_DIST=static
+SYSML_FRONTEND_DIST=frontend/dist
+SYSML_ALLOW_STATIC_FRONTEND=false
 SYSML_MAX_MODEL_BYTES=10485760
 SYSML_PANDOC_PATH=           # 可选，Pandoc 路径
 SYSML_PDF_ENGINE=pandoc|wkhtmltopdf|builtin-fallback

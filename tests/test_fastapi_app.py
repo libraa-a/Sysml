@@ -8,6 +8,7 @@ try:
 except (RuntimeError, ModuleNotFoundError):
     TestClient = None
     app = None
+from sysml_docgen.config import determine_frontend_dir
 from sysml_docgen.store import ModelStore
 
 
@@ -15,10 +16,17 @@ from sysml_docgen.store import ModelStore
 class FastApiAppTest(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
+        self.original_store = app.state.store
+        self.original_frontend_dir = getattr(app.state, "frontend_dir", None)
+        self.original_frontend_mode = getattr(app.state, "frontend_mode", None)
         app.state.store = ModelStore(Path(self.temp_dir.name) / "store.sqlite3")
         self.client = TestClient(app)
 
     def tearDown(self):
+        self.client.close()
+        app.state.store = self.original_store
+        app.state.frontend_dir = self.original_frontend_dir
+        app.state.frontend_mode = self.original_frontend_mode
         self.temp_dir.cleanup()
 
     def test_health_exposes_fastapi_mms_metadata(self):
@@ -29,6 +37,8 @@ class FastApiAppTest(unittest.TestCase):
         self.assertIn(payload["storage"], {"sqlite", "mongodb"})
         self.assertIn("MMS", payload["components"])
         self.assertEqual(payload["capabilities"]["max_model_bytes"], 10 * 1024 * 1024)
+        self.assertIn(payload["capabilities"]["frontend"], {"dist", "missing", "static-fallback"})
+        self.assertIn(payload["capabilities"]["frontend_ready"], {True, False})
 
     def test_mms_projects_route_is_compatible(self):
         response = self.client.get("/api/projects")
@@ -76,6 +86,47 @@ class FastApiAppTest(unittest.TestCase):
         self.assertIn("/api/mms/branches", paths)
         self.assertIn("/api/mdk/parse", paths)
         self.assertIn("/api/docgen/pdf", paths)
+
+    def test_frontend_dir_resolution_requires_built_dist_by_default(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            frontend_dist = root / "frontend" / "dist"
+            static_dir = root / "static"
+            frontend_dist.mkdir(parents=True)
+            static_dir.mkdir(parents=True)
+            (frontend_dist / "index.html").write_text("dist", encoding="utf-8")
+            (static_dir / "index.html").write_text("static", encoding="utf-8")
+
+            frontend_dir, mode = determine_frontend_dir(frontend_dist, static_dir, allow_static_frontend=False)
+
+            self.assertEqual(frontend_dir, frontend_dist)
+            self.assertEqual(mode, "dist")
+
+    def test_frontend_dir_resolution_does_not_silently_fallback_to_static(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            frontend_dist = root / "frontend" / "dist"
+            static_dir = root / "static"
+            static_dir.mkdir(parents=True)
+            (static_dir / "index.html").write_text("static", encoding="utf-8")
+
+            frontend_dir, mode = determine_frontend_dir(frontend_dist, static_dir, allow_static_frontend=False)
+
+            self.assertIsNone(frontend_dir)
+            self.assertEqual(mode, "missing")
+
+    def test_frontend_dir_resolution_can_explicitly_enable_static_fallback(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            frontend_dist = root / "frontend" / "dist"
+            static_dir = root / "static"
+            static_dir.mkdir(parents=True)
+            (static_dir / "index.html").write_text("static", encoding="utf-8")
+
+            frontend_dir, mode = determine_frontend_dir(frontend_dist, static_dir, allow_static_frontend=True)
+
+            self.assertEqual(frontend_dir, static_dir)
+            self.assertEqual(mode, "static-fallback")
 
 
 if __name__ == "__main__":

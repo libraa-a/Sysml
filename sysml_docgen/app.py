@@ -27,6 +27,7 @@ from .config import (
     QUARTO_PATH,
     STATIC_DIR,
     THEME_PRESETS,
+    resolve_frontend_dir,
 )
 from .docgen import build_traceability, generate_document, html_to_pdf_bytes, pandoc_available, quarto_available
 from .files import delete_output_file, list_output_files, resolve_output_file
@@ -39,13 +40,15 @@ from .xmi import parse_xmi_elements
 
 def create_app() -> FastAPI:
     configure_logging()
+    frontend_dir, frontend_mode = resolve_frontend_dir()
     app = FastAPI(
         title="SysML DocGen",
         version="3.0",
         description="基于 SysML 模型的文档自动生成系统：MMS / VE / MDK / DocGen 一体化服务。",
     )
     app.state.store = create_model_store()
-    app.state.frontend_dir = FRONTEND_DIST_DIR if (FRONTEND_DIST_DIR / "index.html").exists() else STATIC_DIR
+    app.state.frontend_dir = frontend_dir
+    app.state.frontend_mode = frontend_mode
     app.middleware("http")(request_logging_middleware)
 
     @app.middleware("http")
@@ -99,8 +102,10 @@ def create_app() -> FastAPI:
                 "output_dir": str(OUTPUT_DIR),
                 "openapi": "/docs",
                 "access_control": "project roles: admin / author / reader",
-                "frontend": "external-dist" if app.state.frontend_dir != STATIC_DIR else "static-ve",
-                "frontend_dir": str(app.state.frontend_dir),
+                "frontend": app.state.frontend_mode,
+                "frontend_dir": str(app.state.frontend_dir) if app.state.frontend_dir else "",
+                "frontend_ready": app.state.frontend_dir is not None,
+                "frontend_expected_dist": str(FRONTEND_DIST_DIR),
                 "themes": list(THEME_PRESETS.keys()),
                 "fonts": list(FONT_PRESETS.keys()),
             },
@@ -126,7 +131,9 @@ def create_app() -> FastAPI:
             "ready": True,
             "storage": "mongodb" if app.state.store.__class__.__name__ == "MongoModelStore" else "sqlite",
             "projects": len(projects),
-            "frontend": str(app.state.frontend_dir),
+            "frontend": str(app.state.frontend_dir) if app.state.frontend_dir else "",
+            "frontend_mode": app.state.frontend_mode,
+            "frontend_ready": app.state.frontend_dir is not None,
             "outputs": str(OUTPUT_DIR),
         }
 
@@ -598,7 +605,19 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="文件不存在") from exc
         return {"deleted": filename}
 
-    app.mount("/", StaticFiles(directory=app.state.frontend_dir, html=True), name="ve")
+    if app.state.frontend_dir is not None:
+        app.mount("/", StaticFiles(directory=app.state.frontend_dir, html=True), name="ve")
+    else:
+        @app.get("/", include_in_schema=False)
+        async def frontend_not_built() -> JSONResponse:
+            return JSONResponse(
+                {
+                    "error": "Frontend build artifacts are missing",
+                    "expected": str(FRONTEND_DIST_DIR / "index.html"),
+                    "hint": "Build the frontend with `npm install && npm run build` in the `frontend` directory.",
+                },
+                status_code=503,
+            )
     return app
 
 

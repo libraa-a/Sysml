@@ -12,7 +12,30 @@ DATA_DIR = ROOT / "data"
 OUTPUT_DIR = Path(os.environ.get("SYSML_OUTPUT_DIR", ROOT / "outputs"))
 STATIC_DIR = ROOT / "static"
 FRONTEND_DIST_DIR = Path(os.environ.get("SYSML_FRONTEND_DIST", ROOT / "frontend" / "dist"))
+ALLOW_STATIC_FRONTEND = os.environ.get("SYSML_ALLOW_STATIC_FRONTEND", "").strip().lower() in {"1", "true", "yes", "on"}
 MAX_MODEL_BYTES = int(os.environ.get("SYSML_MAX_MODEL_BYTES", str(10 * 1024 * 1024)))
+
+
+def determine_frontend_dir(
+    frontend_dist_dir: Path,
+    static_dir: Path,
+    allow_static_frontend: bool,
+) -> tuple[Path | None, str]:
+    """Pick the frontend bundle to serve.
+
+    By default we only serve the built frontend bundle so deployments do not
+    silently fall back to the legacy static UI. The old static UI can still be
+    enabled explicitly for emergency use.
+    """
+    if (frontend_dist_dir / "index.html").exists():
+        return frontend_dist_dir, "dist"
+    if allow_static_frontend and (static_dir / "index.html").exists():
+        return static_dir, "static-fallback"
+    return None, "missing"
+
+
+def resolve_frontend_dir() -> tuple[Path | None, str]:
+    return determine_frontend_dir(FRONTEND_DIST_DIR, STATIC_DIR, ALLOW_STATIC_FRONTEND)
 
 def find_executable(name: str, env_var: str, extra_paths: list[Path]) -> str:
     env_path = os.environ.get(env_var, "").strip()

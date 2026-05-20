@@ -6,6 +6,7 @@ import copy
 import json
 import re
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -50,8 +51,17 @@ class ModelStore:
         connection.row_factory = sqlite3.Row
         return connection
 
+    @contextmanager
+    def connection(self) -> Any:
+        connection = self.connect()
+        try:
+            yield connection
+            connection.commit()
+        finally:
+            connection.close()
+
     def _init_db(self) -> None:
-        with self.connect() as connection:
+        with self.connection() as connection:
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS state (
@@ -98,7 +108,7 @@ class ModelStore:
             )
 
     def _load(self) -> dict[str, Any]:
-        with self.connect() as connection:
+        with self.connection() as connection:
             row = connection.execute("SELECT payload FROM state WHERE key = 'model'").fetchone()
             if row:
                 data = json.loads(row["payload"])
@@ -162,7 +172,7 @@ class ModelStore:
 
     def save(self) -> None:
         payload = json.dumps(self.data, ensure_ascii=False, indent=2)
-        with self.connect() as connection:
+        with self.connection() as connection:
             connection.execute(
                 """
                 INSERT INTO state(key, payload, updated_at)
@@ -203,7 +213,7 @@ class ModelStore:
         element_id: str | None = None,
         detail: dict[str, Any] | None = None,
     ) -> None:
-        with self.connect() as connection:
+        with self.connection() as connection:
             connection.execute(
                 """
                 INSERT INTO audit_events(project_id, branch_name, action, actor, element_id, created_at, detail)
@@ -222,7 +232,7 @@ class ModelStore:
 
     def list_audit(self, project_id: str, limit: int = 80) -> list[dict[str, Any]]:
         self.get_project(project_id)
-        with self.connect() as connection:
+        with self.connection() as connection:
             rows = connection.execute(
                 """
                 SELECT id, project_id, branch_name, action, actor, element_id, created_at, detail
@@ -341,7 +351,7 @@ class ModelStore:
             q = f"%{query.lower()}%"
             params.extend([q, q, q])
         sql += " ORDER BY element_type, element_id"
-        with self.connect() as connection:
+        with self.connection() as connection:
             rows = connection.execute(sql, params).fetchall()
         return [json.loads(row["payload"]) for row in rows]
 
