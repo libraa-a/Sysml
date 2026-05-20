@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import copy
 import base64
-import hashlib
 import html
 import io
 import json
@@ -30,6 +29,30 @@ from .config import (
     SYSTEM_CJK_FONTS,
     THEME_PRESETS,
 )
+from .document_engine.docx_builtin import markdown_to_docx_builtin, split_table_row
+from .document_engine.template import (
+    TOKEN_RE,
+    default_document_template,
+    get_path,
+    render_markdown_table,
+    render_template,
+    resolve_element_token,
+)
+from .document_engine.traceability import (
+    build_traceability,
+    compact_ref,
+    elements_by_type,
+    refs_from_ids,
+    related_targets,
+    render_model_summary_markdown,
+    render_traceability_markdown,
+    render_validation_markdown,
+    trace_ids_for_requirement,
+    trace_status,
+    unique_ids,
+    incoming_sources,
+)
+from .document_engine.utils import stable_hash, utc_now
 from .metamodel import TYPE_LABELS, validate_repository
 
 
@@ -406,15 +429,6 @@ def _docx_table(rows: list[list[str]]) -> str:
 
 def _docx_run_fonts() -> str:
     return '<w:rFonts w:ascii="Segoe UI" w:hAnsi="Segoe UI" w:eastAsia="Microsoft YaHei"/><w:sz w:val="21"/>'
-
-
-def utc_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-
-
-def stable_hash(value: Any) -> str:
-    payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
 
 
 def elements_by_type(elements: dict[str, Element], element_type: str) -> list[Element]:

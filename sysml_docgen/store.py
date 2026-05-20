@@ -804,4 +804,3 @@ def enforce_role(method: str, role: str) -> None:
             raise ForbiddenError("当前角色没有读取权限")
     elif normalized not in {"admin", "author"}:
         raise ForbiddenError("当前角色没有写入权限")
- 
