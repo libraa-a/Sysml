@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xmi:XMI xmlns:xmi="http://www.omg.org/spec/XMI/20131001"
+         xmlns:uml="http://www.omg.org/spec/UML/20131001">
+  <uml:Model xmi:id="MODEL-UPLOAD-XMI" name="Upload XMI Graph Test">
+    <packagedElement xmi:type="uml:Class"
+                     xmi:id="REQ-UPLOAD-XMI-001"
+                     name="上传新增 XMI 图谱验证需求"
+                     sysmlType="Requirement"
+                     stereotype="requirement">
+      <taggedValue name="text" value="系统应支持通过 XMI 文件上传新增需求。"/>
+      <taggedValue name="verification" value="Demo"/>
+    </packagedElement>
+    <packagedElement xmi:type="uml:Class"
+                     xmi:id="BLK-UPLOAD-XMI-001"
+                     name="上传新增 XMI 图谱验证模块"
+                     sysmlType="Block"
+                     stereotype="block"/>
+    <packagedElement xmi:type="uml:Class"
+                     xmi:id="TST-UPLOAD-XMI-001"
+                     name="上传新增 XMI 图谱验证用例"
+                     sysmlType="TestCase"
+                     stereotype="testCase">
+      <taggedValue name="method" value="UI Demo"/>
+      <taggedValue name="criterion" value="Graph shows XMI imported relations"/>
+    </packagedElement>
+    <packagedElement xmi:type="uml:Dependency"
+                     xmi:id="REL-UPLOAD-XMI-001"
+                     name="satisfy"
+                     client="REQ-UPLOAD-XMI-001"
+                     supplier="BLK-UPLOAD-XMI-001"
+                     sysmlRelation="satisfy"/>
+    <packagedElement xmi:type="uml:Dependency"
+                     xmi:id="REL-UPLOAD-XMI-002"
+                     name="verify"
+                     client="REQ-UPLOAD-XMI-001"
+                     supplier="TST-UPLOAD-XMI-001"
+                     sysmlRelation="verify"/>
+  </uml:Model>
+</xmi:XMI>

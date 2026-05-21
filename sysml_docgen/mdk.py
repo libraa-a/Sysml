@@ -11,11 +11,18 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from .integrations.adapters import (
+    SUPPORTED_TOOLS,
+    AdapterError,
+    list_adapters,
+    load_model_result as adapter_load_model_result,
+    parse_content,
+)
+
 
 DEFAULT_SERVER = "http://127.0.0.1:8000"
 DEFAULT_PROJECT = "satellite-power"
 DEFAULT_BRANCH = "main"
-SUPPORTED_TOOLS = {"auto", "json", "xmi", "cameo", "jupyter", "matlab"}
 
 
 class MdkError(RuntimeError):
@@ -157,133 +164,56 @@ class MdkClient:
 
 
 def load_model_file(file_path: str | Path, tool: str = "auto") -> dict[str, Any]:
-    path = Path(file_path)
-    if not path.exists():
-        raise MdkError(f"Model file does not exist: {path}")
-    selected_tool = detect_tool(path, tool)
-    if selected_tool == "json":
-        return load_json_model(path)
-    if selected_tool in {"xmi", "cameo"}:
-        return load_xmi_model(path, selected_tool)
-    if selected_tool == "jupyter":
-        return load_jupyter_model(path)
-    if selected_tool == "matlab":
-        return load_matlab_model(path)
-    raise MdkError(f"Unsupported MDK tool: {selected_tool}")
+    try:
+        return adapter_load_model_result(file_path, tool).model
+    except AdapterError as exc:
+        raise MdkError(str(exc)) from exc
 
 
 def detect_tool(path: Path, requested: str = "auto") -> str:
-    requested = requested.lower()
-    if requested not in SUPPORTED_TOOLS:
-        supported = ", ".join(sorted(SUPPORTED_TOOLS))
-        raise MdkError(f"tool must be one of: {supported}")
-    if requested != "auto":
-        return requested
-    suffix = path.suffix.lower()
-    if suffix == ".json":
-        return "json"
-    if suffix in {".xmi", ".xml"}:
-        return "cameo"
-    if suffix == ".ipynb":
-        return "jupyter"
-    if suffix in {".m", ".mlx"}:
-        return "matlab"
-    if suffix == ".mdzip":
-        raise MdkError("Cameo .mdzip is proprietary; export XMI from Cameo before pushing to MMS.")
-    raise MdkError(f"Cannot detect MDK adapter for file: {path.name}")
+    try:
+        from .integrations.adapters import select_adapter
+
+        return select_adapter(path, requested).id
+    except AdapterError as exc:
+        raise MdkError(str(exc)) from exc
 
 
 def load_json_model(path: Path) -> dict[str, Any]:
-    payload = json.loads(path.read_text(encoding="utf-8-sig"))
-    elements = normalize_elements(payload)
-    return {
-        "format": "json",
-        "elements": elements,
-        "source": {"tool": "json", "file": str(path)},
-    }
+    return load_model_file(path, "json")
 
 
 def load_xmi_model(path: Path, tool: str = "xmi") -> dict[str, Any]:
-    return {
-        "format": "xmi",
-        "xmi": path.read_text(encoding="utf-8"),
-        "source": {"tool": tool, "file": str(path)},
-    }
+    return load_model_file(path, tool)
 
 
 def load_jupyter_model(path: Path) -> dict[str, Any]:
-    notebook = json.loads(path.read_text(encoding="utf-8-sig"))
-    elements: list[dict[str, Any]] = []
-    metadata = notebook.get("metadata", {}).get("sysml_docgen", {})
-    elements.extend(normalize_elements(metadata))
-    for cell in notebook.get("cells", []):
-        cell_metadata = cell.get("metadata", {}).get("sysml_docgen", {})
-        elements.extend(normalize_elements(cell_metadata))
-        source = "".join(cell.get("source", []))
-        elements.extend(extract_commented_elements(source, "#"))
-    return model_from_elements(elements, "jupyter", path)
+    return load_model_file(path, "jupyter")
 
 
 def load_matlab_model(path: Path) -> dict[str, Any]:
-    elements = extract_commented_elements(path.read_text(encoding="utf-8"), "%")
-    return model_from_elements(elements, "matlab", path)
+    return load_model_file(path, "matlab")
 
 
 def model_from_elements(elements: list[dict[str, Any]], tool: str, path: Path) -> dict[str, Any]:
-    deduped = dedupe_elements(elements)
-    if not deduped:
+    from .integrations.adapters import model_from_elements as adapter_model_from_elements
+
+    result = adapter_model_from_elements(elements, tool, str(path))
+    if not result.model.get("elements"):
         raise MdkError(f"{tool} file has no sysml_docgen elements: {path}")
-    return {
-        "format": "json",
-        "elements": deduped,
-        "source": {"tool": tool, "file": str(path)},
-    }
+    return result.model
 
 
 def normalize_elements(payload: Any) -> list[dict[str, Any]]:
-    if not payload:
-        return []
-    if isinstance(payload, list):
-        return [item for item in payload if isinstance(item, dict)]
-    if isinstance(payload, dict):
-        if isinstance(payload.get("elements"), list):
-            return [item for item in payload["elements"] if isinstance(item, dict)]
-        if isinstance(payload.get("elements"), dict):
-            return [item for item in payload["elements"].values() if isinstance(item, dict)]
-        if isinstance(payload.get("element"), dict):
-            return [payload["element"]]
-        if {"id", "type"} <= set(payload):
-            return [payload]
-    return []
+    from .integrations.adapters import normalize_elements as adapter_normalize_elements
+
+    return adapter_normalize_elements(payload)
 
 
 def extract_commented_elements(source: str, prefix: str) -> list[dict[str, Any]]:
-    elements: list[dict[str, Any]] = []
-    block_lines: list[str] = []
-    in_block = False
-    for raw_line in source.splitlines():
-        line = raw_line.strip()
-        if not line.startswith(prefix):
-            continue
-        content = line[len(prefix) :].strip()
-        if content == "sysml-docgen:begin":
-            in_block = True
-            block_lines = []
-            continue
-        if content == "sysml-docgen:end":
-            in_block = False
-            elements.extend(normalize_elements(json.loads("\n".join(block_lines))))
-            continue
-        if in_block:
-            block_lines.append(content)
-            continue
-        if content.startswith("sysml-docgen:element"):
-            raw_json = content.removeprefix("sysml-docgen:element").strip()
-            elements.extend(normalize_elements(json.loads(raw_json)))
-        if content.startswith("sysml-docgen:elements"):
-            raw_json = content.removeprefix("sysml-docgen:elements").strip()
-            elements.extend(normalize_elements(json.loads(raw_json)))
-    return elements
+    from .integrations.adapters import extract_commented_elements as adapter_extract_commented_elements
+
+    return adapter_extract_commented_elements(source, prefix)
 
 
 def dedupe_elements(elements: list[dict[str, Any]]) -> list[dict[str, Any]]:

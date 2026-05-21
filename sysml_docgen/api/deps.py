@@ -25,8 +25,17 @@ def get_docgen_service(store: Any = Depends(get_store)) -> DocgenService:
     return DocgenService(store)
 
 
-def get_integration_service(store: Any = Depends(get_store)) -> IntegrationService:
-    return IntegrationService(store)
+def get_import_jobs(request: Request) -> dict[str, dict[str, Any]]:
+    if not hasattr(request.app.state, "import_jobs"):
+        request.app.state.import_jobs = {}
+    return request.app.state.import_jobs
+
+
+def get_integration_service(
+    store: Any = Depends(get_store),
+    import_jobs: dict[str, dict[str, Any]] = Depends(get_import_jobs),
+) -> IntegrationService:
+    return IntegrationService(store, import_jobs)
 
 
 async def read_identity(

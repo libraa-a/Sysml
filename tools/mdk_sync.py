@@ -19,6 +19,7 @@ from sysml_docgen.mdk import (
     MdkClient,
     MdkConfig,
     MdkError,
+    list_adapters,
     load_model_file,
     write_document,
 )
@@ -44,8 +45,13 @@ def parse(args: argparse.Namespace) -> None:
         "format": model["format"],
         "element_count": len(model.get("elements", [])),
         "elements": model.get("elements", []),
+        "mapping_report": model.get("mapping_report"),
     }
     print(json.dumps(summary, ensure_ascii=False, indent=2))
+
+
+def adapters(args: argparse.Namespace) -> None:
+    print(json.dumps({"adapters": list_adapters()}, ensure_ascii=False, indent=2))
 
 
 def push(args: argparse.Namespace) -> None:
@@ -106,6 +112,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="SysML DocGen MDK sync client")
     add_common_options(parser)
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    adapters_parser = subparsers.add_parser("adapters", help="list external tool adapters and capabilities")
+    adapters_parser.set_defaults(func=adapters)
 
     parse_parser = subparsers.add_parser("parse", help="parse a tool model into the normalized MDK payload")
     parse_parser.add_argument("--file", required=True)

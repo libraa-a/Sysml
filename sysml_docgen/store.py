@@ -431,14 +431,18 @@ class ModelStore:
         actor: str = "engineer",
     ) -> dict[str, Any]:
         source_format = str(payload.get("format", "json")).lower()
+        mapping_report = payload.get("mapping_report") or payload.get("report")
         is_xmi_import = source_format == "xmi" or payload.get("xmi")
-        if is_xmi_import:
+        provided_elements = payload.get("elements")
+        if is_xmi_import and provided_elements is not None:
+            elements = provided_elements
+        elif is_xmi_import:
             xmi_text = payload.get("xmi") or payload.get("content") or payload.get("text") or ""
             if not isinstance(xmi_text, str) or not xmi_text.strip():
                 raise StoreError("XMI 导入数据不能为空")
             elements = parse_xmi_elements(xmi_text)
         else:
-            elements = payload.get("elements")
+            elements = provided_elements
         if isinstance(elements, dict):
             iterable = elements.values()
         elif isinstance(elements, list):
@@ -446,25 +450,21 @@ class ModelStore:
         else:
             raise StoreError("导入数据需要 elements 数组或对象")
         imported = []
-        if is_xmi_import:
-            parsed_elements = [copy.deepcopy(element) for element in iterable]
-            for element in parsed_elements:
-                element_without_relations = copy.deepcopy(element)
-                element_without_relations["relations"] = []
-                self.upsert_element(project_id, branch_name, element_without_relations, actor)
-            for element in parsed_elements:
-                imported.append(self.upsert_element(project_id, branch_name, element, actor))
-        else:
-            for element in iterable:
-                imported.append(self.upsert_element(project_id, branch_name, element, actor))
+        parsed_elements = [copy.deepcopy(element) for element in iterable]
+        for element in parsed_elements:
+            element_without_relations = copy.deepcopy(element)
+            element_without_relations["relations"] = []
+            self.upsert_element(project_id, branch_name, element_without_relations, actor)
+        for element in parsed_elements:
+            imported.append(self.upsert_element(project_id, branch_name, element, actor))
         self.record_audit(
             project_id,
             branch_name,
             "import_elements",
             actor,
-            detail={"count": len(imported), "format": source_format},
+            detail={"count": len(imported), "format": source_format, "mapping_report": mapping_report},
         )
-        return {"imported": len(imported), "format": source_format, "elements": imported}
+        return {"imported": len(imported), "format": source_format, "elements": imported, "mapping_report": mapping_report}
 
     def export_branch(self, project_id: str, branch_name: str) -> dict[str, Any]:
         project = self.get_project(project_id)

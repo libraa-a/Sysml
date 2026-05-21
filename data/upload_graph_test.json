@@ -1,0 +1,51 @@
+{
+  "elements": [
+    {
+      "id": "REQ-UPLOAD-GRAPH-001",
+      "name": "上传新增图谱验证需求",
+      "type": "Requirement",
+      "stereotype": "requirement",
+      "description": "用于验证前端上传导入后，新增需求能进入模型仓库并显示在 Graph 页签。",
+      "owner": "MDK验证组",
+      "attributes": {
+        "text": "系统应在文件上传导入后显示新增元素及其关系图。",
+        "verification": "Demo"
+      },
+      "relations": [
+        {
+          "type": "satisfy",
+          "target": "BLK-UPLOAD-GRAPH-001"
+        },
+        {
+          "type": "verify",
+          "target": "TST-UPLOAD-GRAPH-001"
+        }
+      ]
+    },
+    {
+      "id": "BLK-UPLOAD-GRAPH-001",
+      "name": "上传新增图谱验证模块",
+      "type": "Block",
+      "stereotype": "block",
+      "description": "用于满足上传新增图谱验证需求的测试模块。",
+      "owner": "MDK验证组",
+      "attributes": {
+        "responsibility": "显示新增导入元素"
+      },
+      "relations": []
+    },
+    {
+      "id": "TST-UPLOAD-GRAPH-001",
+      "name": "上传新增图谱验证用例",
+      "type": "TestCase",
+      "stereotype": "testCase",
+      "description": "确认上传导入后新增需求和模块可在图谱中查看。",
+      "owner": "MDK验证组",
+      "attributes": {
+        "method": "UI Demo",
+        "criterion": "Model 与 Graph 页签均可看到新增元素"
+      },
+      "relations": []
+    }
+  ]
+}

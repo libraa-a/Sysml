@@ -6,6 +6,7 @@ from typing import Any
 from xml.etree import ElementTree as ET
 
 from .metamodel import TYPE_PREFIX, default_stereotype
+from .integrations.types import AdapterParseResult, MappingReport
 
 
 XMI_NS = "http://www.omg.org/spec/XMI/20131001"
@@ -105,11 +106,18 @@ def elements_to_xmi(export_payload: dict[str, Any]) -> str:
 def parse_xmi_elements(xmi_text: str) -> list[dict[str, Any]]:
     """Parse a pragmatic subset of XMI into the repository element shape."""
 
+    return parse_xmi_with_report(xmi_text).model["elements"]
+
+
+def parse_xmi_with_report(xmi_text: str, adapter: str = "xmi") -> AdapterParseResult:
+    """Parse XMI and explain how source nodes map into repository elements."""
+
     root = ET.fromstring(xmi_text)
     applied_stereotypes = _applied_stereotypes(root)
     elements: dict[str, dict[str, Any]] = {}
     pending_relations: list[tuple[str, str, str]] = []
     generated_counts: dict[str, int] = {}
+    report = MappingReport(adapter=adapter)
 
     for node in root.iter():
         xmi_type = _attr(node, "type")
@@ -126,19 +134,67 @@ def parse_xmi_elements(xmi_text: str) -> list[dict[str, Any]]:
             relation_type = _attr(node, "sysmlRelation") or node.attrib.get("name") or "dependency"
             if source and target:
                 pending_relations.append((source, relation_type, target))
+                report.converted.append(
+                    {
+                        "source": raw_element_id or node.attrib.get("name", ""),
+                        "from": xmi_type or tag,
+                        "to": relation_type,
+                        "reason": "dependency mapped to repository relation",
+                    }
+                )
+            else:
+                report.skipped.append(
+                    {
+                        "source": raw_element_id or node.attrib.get("name", ""),
+                        "type": xmi_type or tag,
+                        "reason": "dependency is missing source or target",
+                    }
+                )
             continue
         if normalized_type == "Connector":
             endpoints = _connector_endpoints(node)
             if len(endpoints) >= 2:
                 pending_relations.append((endpoints[0], "connect", endpoints[1]))
+                report.converted.append(
+                    {
+                        "source": raw_element_id or node.attrib.get("name", ""),
+                        "from": xmi_type or tag,
+                        "to": "connect",
+                        "reason": "connector endpoints mapped to connect relation",
+                    }
+                )
+            else:
+                report.skipped.append(
+                    {
+                        "source": raw_element_id or node.attrib.get("name", ""),
+                        "type": xmi_type or tag,
+                        "reason": "connector has fewer than two endpoints",
+                    }
+                )
             continue
         if normalized_type not in TYPE_PREFIX:
+            report.skipped.append(
+                {
+                    "source": raw_element_id or node.attrib.get("name", ""),
+                    "type": xmi_type or tag,
+                    "reason": "unsupported UML/SysML type",
+                }
+            )
             continue
 
         element_id = raw_element_id or _next_id(normalized_type, generated_counts)
         attributes = _tagged_values(node)
         if xmi_type:
             attributes.setdefault("xmi_type", xmi_type)
+        if xmi_type and xmi_type != TYPE_TO_UML.get(normalized_type, ""):
+            report.converted.append(
+                {
+                    "source": element_id,
+                    "from": xmi_type,
+                    "to": normalized_type,
+                    "reason": "UML type or applied stereotype mapped to repository element type",
+                }
+            )
         owner = _attr(node, "owner") or _attr(node, "ownerScope")
         parent = _nearest_parent_id(root, node)
         if parent:
@@ -159,9 +215,30 @@ def parse_xmi_elements(xmi_text: str) -> list[dict[str, Any]]:
 
     for source, relation_type, target in pending_relations:
         if source in elements:
-            elements[source].setdefault("relations", []).append({"type": relation_type, "target": target})
+            if target in elements:
+                elements[source].setdefault("relations", []).append({"type": relation_type, "target": target})
+            else:
+                elements[source].setdefault("relations", []).append({"type": relation_type, "target": target})
+                report.downgraded.append(
+                    {
+                        "source": source,
+                        "relation": relation_type,
+                        "target": target,
+                        "reason": "target is not represented as an imported repository element",
+                    }
+                )
 
-    return list(elements.values())
+    report.imported = len(elements)
+    if report.downgraded:
+        report.warnings.append("Some XMI relationships target elements that were not imported.")
+    model = {
+        "format": "xmi",
+        "elements": list(elements.values()),
+        "source": {"adapter": adapter, "tool": adapter},
+        "mapping_report": report.to_dict(),
+    }
+
+    return AdapterParseResult(model, report)
 
 
 def _qname(namespace: str, name: str) -> str:

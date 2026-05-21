@@ -84,8 +84,139 @@ class FastApiAppTest(unittest.TestCase):
         self.assertIn("/api/mms/models", paths)
         self.assertIn("/api/mms/models/{model_name}", paths)
         self.assertIn("/api/mms/branches", paths)
+        self.assertIn("/api/mdk/adapters", paths)
         self.assertIn("/api/mdk/parse", paths)
+        self.assertIn("/api/mdk/import-jobs", paths)
+        self.assertIn("/api/mdk/import-jobs/{job_id}", paths)
+        self.assertIn("/api/mdk/import-jobs/{job_id}/apply", paths)
         self.assertIn("/api/docgen/pdf", paths)
+
+    def test_mdk_adapters_route_exposes_capabilities(self):
+        response = self.client.get("/api/mdk/adapters")
+        self.assertEqual(response.status_code, 200)
+        adapters = {adapter["id"]: adapter for adapter in response.json()["adapters"]}
+        self.assertIn("cameo", adapters)
+        self.assertFalse(adapters["cameo"]["can_write"])
+        self.assertIn("xmi", adapters["cameo"]["formats"])
+        self.assertEqual(adapters["cameo"]["vendor"], "Dassault Systemes")
+        self.assertIn(".xmi", adapters["cameo"]["supported_extensions"])
+
+    def test_mdk_parse_returns_mapping_report(self):
+        response = self.client.post(
+            "/api/mdk/parse",
+            json={
+                "filename": "model.json",
+                "tool": "json",
+                "content": {
+                    "elements": [
+                        {"id": "REQ-API-REPORT", "name": "API import report", "type": "Requirement"}
+                    ]
+                },
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["parsed_model"]["adapter"], "json")
+        self.assertEqual(payload["mapping_report"]["imported"], 1)
+
+    def test_mdk_push_accepts_adapter_parsed_xmi_payload(self):
+        response = self.client.post(
+            "/api/mdk/push",
+            json={
+                "project": "satellite-power",
+                "branch": "main",
+                "model": {
+                    "format": "xmi",
+                    "elements": [
+                        {"id": "BLK-XMI-PUSH", "name": "Adapter parsed XMI", "type": "Block", "relations": []}
+                    ],
+                    "mapping_report": {"adapter": "cameo", "imported": 1},
+                },
+            },
+            headers={"X-User": "engineer", "X-Role": "author"},
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["imported"], 1)
+        self.assertEqual(payload["mapping_report"]["adapter"], "cameo")
+
+    def test_mdk_import_job_preview_and_apply(self):
+        created = self.client.post(
+            "/api/mdk/import-jobs",
+            json={
+                "project": "satellite-power",
+                "branch": "main",
+                "filename": "model.json",
+                "tool": "json",
+                "content": {
+                    "elements": [
+                        {"id": "REQ-JOB-001", "name": "Job import", "type": "Requirement"}
+                    ]
+                },
+            },
+            headers={"X-User": "engineer", "X-Role": "author"},
+        )
+        self.assertEqual(created.status_code, 200)
+        job = created.json()["job"]
+        self.assertEqual(job["status"], "parsed")
+        self.assertEqual(job["mapping_report"]["imported"], 1)
+
+        fetched = self.client.get(f"/api/mdk/import-jobs/{job['id']}")
+        self.assertEqual(fetched.status_code, 200)
+        self.assertEqual(fetched.json()["job"]["id"], job["id"])
+
+        applied = self.client.post(
+            f"/api/mdk/import-jobs/{job['id']}/apply",
+            json={"commit": True, "message": "Apply import job"},
+            headers={"X-User": "engineer", "X-Role": "author"},
+        )
+        self.assertEqual(applied.status_code, 200)
+        payload = applied.json()
+        self.assertEqual(payload["job"]["status"], "applied")
+        self.assertEqual(payload["result"]["imported"], 1)
+        self.assertIn("commit", payload["result"])
+
+    def test_mdk_import_job_applies_json_elements_with_forward_relations(self):
+        created = self.client.post(
+            "/api/mdk/import-jobs",
+            json={
+                "project": "satellite-power",
+                "branch": "main",
+                "filename": "upload-graph.json",
+                "tool": "json",
+                "content": {
+                    "elements": [
+                        {
+                            "id": "REQ-FWD-001",
+                            "name": "Forward relation requirement",
+                            "type": "Requirement",
+                            "relations": [{"type": "satisfy", "target": "BLK-FWD-001"}],
+                        },
+                        {
+                            "id": "BLK-FWD-001",
+                            "name": "Forward relation block",
+                            "type": "Block",
+                            "relations": [],
+                        },
+                    ]
+                },
+            },
+            headers={"X-User": "engineer", "X-Role": "author"},
+        )
+        self.assertEqual(created.status_code, 200)
+        job_id = created.json()["job"]["id"]
+
+        applied = self.client.post(
+            f"/api/mdk/import-jobs/{job_id}/apply",
+            json={"commit": False},
+            headers={"X-User": "engineer", "X-Role": "author"},
+        )
+        self.assertEqual(applied.status_code, 200)
+        self.assertEqual(applied.json()["result"]["imported"], 2)
+
+        element = self.client.get("/api/projects/satellite-power/branches/main/elements/REQ-FWD-001")
+        self.assertEqual(element.status_code, 200)
+        self.assertEqual(element.json()["element"]["relations"][0]["target"], "BLK-FWD-001")
 
     def test_frontend_dir_resolution_requires_built_dist_by_default(self):
         with tempfile.TemporaryDirectory() as temp_dir:

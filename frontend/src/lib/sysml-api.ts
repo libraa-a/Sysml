@@ -173,6 +173,74 @@ export type DocumentRecord = {
   pdf_base64?: string
 }
 
+export type MdkAdapter = {
+  id: string
+  label: string
+  can_read: boolean
+  can_write: boolean
+  can_validate: boolean
+  can_commit: boolean
+  can_rollback: boolean
+  formats: string[]
+  vendor?: string
+  version?: string
+  supported_extensions?: string[]
+  input_mime_types?: string[]
+  output_formats?: string[]
+  schema_version?: string
+  limitations?: string[]
+}
+
+export type MappingReportEntry = Record<string, unknown>
+
+export type MappingReport = {
+  adapter: string
+  imported: number
+  skipped: MappingReportEntry[]
+  converted: MappingReportEntry[]
+  downgraded: MappingReportEntry[]
+  warnings: string[]
+}
+
+export type MdkParsePayload = {
+  filename?: string
+  tool?: string
+  adapter?: string
+  format?: string
+  content: string | Record<string, unknown>
+}
+
+export type MdkParseResponse = {
+  parsed_model: {
+    name: string
+    type: string
+    adapter: string
+    elements: SysmlElement[]
+    element_count: number
+  }
+  mapping_report: MappingReport
+}
+
+export type MdkImportJob = {
+  id: string
+  status: 'parsed' | 'applied'
+  project: string
+  branch: string
+  adapter: string
+  filename: string
+  created_at: string
+  created_by: string
+  applied_at?: string
+  applied_by?: string
+  parsed_model: MdkParseResponse['parsed_model']
+  mapping_report: MappingReport
+  apply_result?: {
+    imported?: number
+    commit?: Commit
+    mapping_report?: MappingReport
+  } | null
+}
+
 type ApiOptions = RequestInit & {
   identity?: Identity | null
   role?: SysmlRole
@@ -224,11 +292,12 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
 
   if (!response.ok) {
     let message = response.statusText
+    const errorText = await response.text()
     try {
-      const payload = await response.json()
+      const payload = JSON.parse(errorText)
       message = payload.error || payload.detail || message
     } catch {
-      message = await response.text()
+      message = errorText
     }
     throw new Error(message || '请求失败')
   }

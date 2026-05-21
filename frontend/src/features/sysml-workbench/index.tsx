@@ -5,6 +5,7 @@ import {
   useMemo,
   Suspense,
   useState,
+  type ChangeEvent,
   type FormEvent,
   type ReactNode,
 } from 'react'
@@ -58,8 +59,10 @@ import {
   Search,
   ShieldCheck,
   Trash2,
+  Upload,
   UserCircle,
   Workflow,
+  Wrench,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -75,6 +78,10 @@ import {
   type DiffPayload,
   type DocumentRecord,
   type Identity,
+  type MappingReport,
+  type MdkAdapter,
+  type MdkImportJob,
+  type MdkParseResponse,
   type Metamodel,
   type Project,
   type Relation,
@@ -159,6 +166,26 @@ const defaultTemplate = `# {{model:summary}}
 {{validation:issues}}
 `
 
+const sampleMdkJson = JSON.stringify(
+  {
+    elements: [
+      {
+        id: 'REQ-MDK-001',
+        name: '外部工具导入需求',
+        type: 'Requirement',
+        stereotype: 'requirement',
+        attributes: {
+          text: '系统应支持从外部建模工具导入模型元素。',
+          verification: 'Review',
+        },
+        relations: [],
+      },
+    ],
+  },
+  null,
+  2
+)
+
 const typeNames: Record<string, string> = {
   Requirement: '需求',
   Block: '模块',
@@ -222,7 +249,7 @@ const severityLabels = {
   info: 'Info',
 }
 
-const workbenchTabs = ['model', 'diagram', 'trace', 'version', 'docgen'] as const
+const workbenchTabs = ['model', 'diagram', 'trace', 'version', 'docgen', 'mdk'] as const
 
 type WorkbenchTab = (typeof workbenchTabs)[number]
 
@@ -302,6 +329,16 @@ export function SysmlWorkbench() {
   const [currentDocument, setCurrentDocument] = useState<DocumentRecord | null>(
     null
   )
+  const [mdkAdapters, setMdkAdapters] = useState<MdkAdapter[]>([])
+  const [mdkTool, setMdkTool] = useState('json')
+  const [mdkFilename, setMdkFilename] = useState('model.json')
+  const [mdkContent, setMdkContent] = useState(sampleMdkJson)
+  const [mdkParseResult, setMdkParseResult] = useState<MdkParseResponse | null>(
+    null
+  )
+  const [mdkImportJob, setMdkImportJob] = useState<MdkImportJob | null>(null)
+  const [mdkCommit, setMdkCommit] = useState(true)
+  const [mdkMessage, setMdkMessage] = useState('MDK frontend import')
   const [activeTab, setActiveTab] = useState<WorkbenchTab>(() =>
     tabFromHash(window.location.hash)
   )
@@ -515,6 +552,25 @@ export function SysmlWorkbench() {
     if (tab === 'trace') void loadTraceability()
     if (tab === 'version') void loadVersionData()
     if (tab === 'docgen') void loadDocuments()
+    if (tab === 'mdk') void loadMdkAdapters()
+  }
+
+  async function loadMdkAdapters() {
+    setBusy((current) => current || 'mdk-adapters')
+    try {
+      const payload = await api<{ adapters: MdkAdapter[] }>('/api/mdk/adapters', {
+        identity,
+        role,
+      })
+      setMdkAdapters(payload.adapters)
+      if (!payload.adapters.some((adapter) => adapter.id === mdkTool)) {
+        setMdkTool(payload.adapters[0]?.id || 'json')
+      }
+    } catch (error) {
+      notifyError(error)
+    } finally {
+      setBusy((current) => (current === 'mdk-adapters' ? '' : current))
+    }
   }
 
   async function handleLogin() {
@@ -893,6 +949,106 @@ export function SysmlWorkbench() {
     }
   }
 
+  async function parseMdkContent(
+    nextContent = mdkContent,
+    nextFilename = mdkFilename,
+    nextTool = mdkTool
+  ) {
+    if (!nextContent.trim()) {
+      toast.error('请先上传或粘贴外部工具模型内容')
+      return
+    }
+    setBusy('mdk-parse')
+    try {
+      const content =
+        nextTool === 'json' ? parseJson<Record<string, unknown>>(nextContent, '模型 JSON', {}) : nextContent
+      const payload = await api<MdkParseResponse>('/api/mdk/parse', {
+        method: 'POST',
+        body: JSON.stringify({
+          filename: nextFilename.trim(),
+          tool: nextTool,
+          content,
+        }),
+        identity,
+        role,
+      })
+      setMdkParseResult(payload)
+      setMdkImportJob(null)
+      toast.success(`解析完成：${payload.parsed_model.element_count} 个元素`)
+    } catch (error) {
+      notifyError(error)
+    } finally {
+      setBusy('')
+    }
+  }
+
+  async function createMdkImportJob() {
+    if (!projectId || !branch) return
+    if (!mdkContent.trim()) {
+      toast.error('请先上传或粘贴外部工具模型内容')
+      return
+    }
+    setBusy('mdk-job')
+    try {
+      const content =
+        mdkTool === 'json' ? parseJson<Record<string, unknown>>(mdkContent, '模型 JSON', {}) : mdkContent
+      const payload = await api<{ job: MdkImportJob }>('/api/mdk/import-jobs', {
+        method: 'POST',
+        body: JSON.stringify({
+          project: projectId,
+          branch,
+          filename: mdkFilename.trim(),
+          tool: mdkTool,
+          content,
+        }),
+        identity,
+        role,
+      })
+      setMdkImportJob(payload.job)
+      setMdkParseResult({
+        parsed_model: payload.job.parsed_model,
+        mapping_report: payload.job.mapping_report,
+      })
+      toast.success(`导入任务已创建：${payload.job.id}`)
+    } catch (error) {
+      notifyError(error)
+    } finally {
+      setBusy('')
+    }
+  }
+
+  async function applyMdkImportJob() {
+    if (!projectId || !branch || !mdkImportJob) return
+    setBusy('mdk-apply')
+    try {
+      const payload = await api<{
+        job: MdkImportJob
+        result: { imported: number; mapping_report?: MappingReport }
+      }>(
+        `/api/mdk/import-jobs/${encodeURIComponent(mdkImportJob.id)}/apply`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            project: projectId,
+            branch,
+            commit: mdkCommit,
+            message: mdkMessage,
+          }),
+          identity,
+          role,
+        }
+      )
+      setMdkImportJob(payload.job)
+      await loadElements()
+      if (mdkCommit) await loadProjectBranches()
+      toast.success(`已应用导入任务，导入 ${payload.result.imported} 个元素`)
+    } catch (error) {
+      notifyError(error)
+    } finally {
+      setBusy('')
+    }
+  }
+
   function downloadCurrent(format: 'html' | 'markdown' | 'pdf') {
     if (!currentDocument) {
       toast.error('请先生成或打开一个文档')
@@ -1109,6 +1265,10 @@ export function SysmlWorkbench() {
                     <FileText className='size-4' />
                     Docs
                   </TabsTrigger>
+                  <TabsTrigger value='mdk'>
+                    <Wrench className='size-4' />
+                    MDK
+                  </TabsTrigger>
                 </TabsList>
               </div>
 
@@ -1206,6 +1366,29 @@ export function SysmlWorkbench() {
                   onGenerate={generateDocument}
                   onOpen={openDocument}
                   onDownload={downloadCurrent}
+                  busy={busy}
+                />
+              </TabsContent>
+
+              <TabsContent value='mdk'>
+                <MdkTab
+                  adapters={mdkAdapters}
+                  tool={mdkTool}
+                  setTool={setMdkTool}
+                  filename={mdkFilename}
+                  setFilename={setMdkFilename}
+                  content={mdkContent}
+                  setContent={setMdkContent}
+                  parseResult={mdkParseResult}
+                  importJob={mdkImportJob}
+                  commit={mdkCommit}
+                  setCommit={setMdkCommit}
+                  message={mdkMessage}
+                  setMessage={setMdkMessage}
+                  onRefreshAdapters={loadMdkAdapters}
+                  onParse={parseMdkContent}
+                  onCreateJob={createMdkImportJob}
+                  onApplyJob={applyMdkImportJob}
                   busy={busy}
                 />
               </TabsContent>
@@ -2907,6 +3090,373 @@ function DocgenTab(props: DocgenTabProps) {
   )
 }
 
+type MdkTabProps = {
+  adapters: MdkAdapter[]
+  tool: string
+  setTool: (value: string) => void
+  filename: string
+  setFilename: (value: string) => void
+  content: string
+  setContent: (value: string) => void
+  parseResult: MdkParseResponse | null
+  importJob: MdkImportJob | null
+  commit: boolean
+  setCommit: (value: boolean) => void
+  message: string
+  setMessage: (value: string) => void
+  onRefreshAdapters: () => void
+  onParse: (content?: string, filename?: string, tool?: string) => void
+  onCreateJob: () => void
+  onApplyJob: () => void
+  busy: string
+}
+
+function MdkTab(props: MdkTabProps) {
+  const selectedAdapter = props.adapters.find((adapter) => adapter.id === props.tool)
+  const report = props.parseResult?.mapping_report
+  const canApply = Boolean(props.importJob && props.importJob.status === 'parsed')
+
+  async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    if (!file) return
+    const text = await file.text()
+    const adapter = adapterFromFilename(file.name, props.adapters)
+    const nextTool = adapter?.id || props.tool
+    props.setFilename(file.name)
+    props.setContent(text)
+    if (adapter) props.setTool(adapter.id)
+    event.target.value = ''
+    props.onParse(text, file.name, nextTool)
+  }
+
+  return (
+    <div className='grid gap-4 xl:grid-cols-[minmax(360px,0.42fr)_minmax(560px,0.58fr)]'>
+      <div className='space-y-4'>
+        <Card>
+          <CardHeader>
+            <div className='flex items-center justify-between gap-3'>
+              <div>
+                <CardTitle>外部工具适配器</CardTitle>
+                <CardDescription>
+                  Cameo / Jupyter / MATLAB / JSON / XMI 的统一接入能力
+                </CardDescription>
+              </div>
+              <Button
+                variant='outline'
+                size='sm'
+                onClick={props.onRefreshAdapters}
+                disabled={props.busy === 'mdk-adapters'}
+              >
+                {props.busy === 'mdk-adapters' ? (
+                  <Loader2 className='size-4 animate-spin' />
+                ) : (
+                  <RefreshCw className='size-4' />
+                )}
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {props.adapters.length ? (
+              <div className='grid gap-3'>
+                {props.adapters.map((adapter) => (
+                  <button
+                    key={adapter.id}
+                    type='button'
+                    onClick={() => props.setTool(adapter.id)}
+                    className={cn(
+                      'rounded-md border p-3 text-left transition-colors hover:bg-muted/50',
+                      props.tool === adapter.id && 'border-primary bg-muted'
+                    )}
+                  >
+                    <div className='flex flex-wrap items-center justify-between gap-2'>
+                      <div>
+                        <div className='font-medium'>{adapter.label}</div>
+                        <div className='font-mono text-xs text-muted-foreground'>
+                          {adapter.id} / {adapter.vendor || 'SysML DocGen'} / v{adapter.version || '1.0.0'}
+                        </div>
+                      </div>
+                      <Badge variant={adapter.can_write ? 'secondary' : 'outline'}>
+                        {adapter.can_write ? 'read/write' : 'read only'}
+                      </Badge>
+                    </div>
+                    <div className='mt-3 flex flex-wrap gap-1.5'>
+                      <CapabilityBadge enabled={adapter.can_read} label='读' />
+                      <CapabilityBadge enabled={adapter.can_write} label='写' />
+                      <CapabilityBadge enabled={adapter.can_validate} label='校验' />
+                      <CapabilityBadge enabled={adapter.can_commit} label='提交' />
+                      <CapabilityBadge enabled={adapter.can_rollback} label='回滚' />
+                    </div>
+                    {adapter.limitations?.length ? (
+                      <p className='mt-2 line-clamp-2 text-xs text-muted-foreground'>
+                        {adapter.limitations.join('；')}
+                      </p>
+                    ) : null}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <EmptyState title='未加载适配器' description='点击刷新读取服务端能力声明' />
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>导入设置</CardTitle>
+            <CardDescription>
+              解析成功后可导入当前项目分支，并选择是否自动提交
+            </CardDescription>
+          </CardHeader>
+          <CardContent className='space-y-4'>
+            <Field label='适配器'>
+              <Select value={props.tool} onValueChange={props.setTool}>
+                <SelectTrigger className='w-full'>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {props.adapters.map((adapter) => (
+                    <SelectItem key={adapter.id} value={adapter.id}>
+                      {adapter.label}
+                    </SelectItem>
+                  ))}
+                  {!props.adapters.length && <SelectItem value='json'>JSON</SelectItem>}
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label='文件名'>
+              <Input
+                value={props.filename}
+                onChange={(event) => props.setFilename(event.target.value)}
+                placeholder='model.json / model.xmi / analysis.ipynb'
+              />
+            </Field>
+            <label className='flex items-center gap-2 text-sm'>
+              <Checkbox
+                checked={props.commit}
+                onCheckedChange={(checked) => props.setCommit(Boolean(checked))}
+              />
+              导入后自动提交
+            </label>
+            <Field label='提交说明'>
+              <Input
+                value={props.message}
+                onChange={(event) => props.setMessage(event.target.value)}
+                disabled={!props.commit}
+              />
+            </Field>
+            {selectedAdapter && (
+              <Alert>
+                <Wrench className='size-4' />
+                <AlertTitle>{selectedAdapter.label}</AlertTitle>
+                <AlertDescription>
+                  扩展名：{(selectedAdapter.supported_extensions || selectedAdapter.formats).join(', ')}
+                  ；能力：{adapterCapabilityText(selectedAdapter)}
+                </AlertDescription>
+              </Alert>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className='space-y-4'>
+        <Card>
+          <CardHeader>
+            <div className='flex items-center justify-between gap-3'>
+              <div>
+                <CardTitle>模型内容解析</CardTitle>
+                <CardDescription>上传文件或粘贴 JSON、XMI、Notebook、MATLAB 标记内容</CardDescription>
+              </div>
+              <div className='flex gap-2'>
+                <Button variant='outline' asChild>
+                  <label>
+                    <Upload className='size-4' />
+                    上传并解析
+                    <input
+                      type='file'
+                      className='hidden'
+                      accept='.json,.xmi,.xml,.ipynb,.m,.mlx'
+                      onChange={handleFileChange}
+                    />
+                  </label>
+                </Button>
+                <Button
+                  variant='outline'
+                  onClick={() => props.onParse()}
+                  disabled={props.busy === 'mdk-parse'}
+                >
+                  {props.busy === 'mdk-parse' ? (
+                    <Loader2 className='size-4 animate-spin' />
+                  ) : (
+                    <Search className='size-4' />
+                  )}
+                  重新解析
+                </Button>
+                <Button
+                  variant='outline'
+                  onClick={props.onCreateJob}
+                  disabled={props.busy === 'mdk-job'}
+                >
+                  {props.busy === 'mdk-job' ? (
+                    <Loader2 className='size-4 animate-spin' />
+                  ) : (
+                    <Archive className='size-4' />
+                  )}
+                  创建任务
+                </Button>
+                <Button
+                  onClick={props.onApplyJob}
+                  disabled={!canApply || props.busy === 'mdk-apply'}
+                >
+                  {props.busy === 'mdk-apply' ? (
+                    <Loader2 className='size-4 animate-spin' />
+                  ) : (
+                    <Save className='size-4' />
+                  )}
+                  确认导入
+                </Button>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className='space-y-4'>
+            <Textarea
+              className='min-h-[340px] font-mono text-xs'
+              value={props.content}
+              onChange={(event) => props.setContent(event.target.value)}
+            />
+            {props.parseResult && (
+              <div className='grid gap-3 sm:grid-cols-4'>
+                <MdkMetric label='元素' value={props.parseResult.parsed_model.element_count} />
+                <MdkMetric label='跳过' value={report?.skipped.length || 0} />
+                <MdkMetric label='转换' value={report?.converted.length || 0} />
+                <MdkMetric label='降级' value={report?.downgraded.length || 0} />
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {props.importJob && (
+          <Card>
+            <CardHeader>
+              <div className='flex items-center justify-between gap-3'>
+                <div>
+                  <CardTitle>导入任务</CardTitle>
+                  <CardDescription>{props.importJob.id}</CardDescription>
+                </div>
+                <Badge variant={props.importJob.status === 'applied' ? 'secondary' : 'outline'}>
+                  {props.importJob.status}
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent className='grid gap-3 text-sm sm:grid-cols-2'>
+              <div>
+                <span className='text-muted-foreground'>目标：</span>
+                {props.importJob.project} / {props.importJob.branch}
+              </div>
+              <div>
+                <span className='text-muted-foreground'>来源：</span>
+                {props.importJob.adapter} / {props.importJob.filename || '-'}
+              </div>
+              <div>
+                <span className='text-muted-foreground'>创建：</span>
+                {props.importJob.created_by} / {props.importJob.created_at}
+              </div>
+              <div>
+                <span className='text-muted-foreground'>应用：</span>
+                {props.importJob.applied_at || '等待确认'}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        <Card>
+          <CardHeader>
+            <div className='flex items-center justify-between gap-3'>
+              <div>
+                <CardTitle>映射报告</CardTitle>
+                <CardDescription>
+                  {props.parseResult
+                    ? `${props.parseResult.parsed_model.adapter} / ${props.parseResult.parsed_model.type}`
+                    : '解析后显示转换、跳过和降级详情'}
+                </CardDescription>
+              </div>
+              {props.parseResult && (
+                <Badge variant='secondary'>
+                  imported {props.parseResult.mapping_report.imported}
+                </Badge>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent>
+            {props.parseResult ? (
+              <div className='grid gap-4 xl:grid-cols-2'>
+                <MappingReportGroup
+                  title='跳过'
+                  items={props.parseResult.mapping_report.skipped}
+                  empty='没有跳过的内容'
+                />
+                <MappingReportGroup
+                  title='转换'
+                  items={props.parseResult.mapping_report.converted}
+                  empty='没有需要转换的内容'
+                />
+                <MappingReportGroup
+                  title='降级'
+                  items={props.parseResult.mapping_report.downgraded}
+                  empty='没有降级内容'
+                />
+                <div className='rounded-md border p-3'>
+                  <h3 className='mb-2 text-sm font-semibold'>警告</h3>
+                  {props.parseResult.mapping_report.warnings.length ? (
+                    <div className='space-y-2 text-sm'>
+                      {props.parseResult.mapping_report.warnings.map((warning) => (
+                        <div key={warning} className='rounded-md bg-muted p-2'>
+                          {warning}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className='text-sm text-muted-foreground'>没有警告</p>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <EmptyState title='等待解析' description='粘贴外部模型内容后点击解析' />
+            )}
+          </CardContent>
+        </Card>
+
+        {props.parseResult?.parsed_model.elements.length ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>解析出的元素</CardTitle>
+              <CardDescription>
+                {props.parseResult.parsed_model.elements.length} 个元素将导入当前分支
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ScrollArea className='h-[220px] rounded-md border'>
+                <div className='divide-y'>
+                  {props.parseResult.parsed_model.elements.map((element) => (
+                    <div key={element.id} className='px-3 py-2 text-sm'>
+                      <div className='flex items-center justify-between gap-2'>
+                        <span className='font-mono font-semibold'>{element.id}</span>
+                        <Badge variant='outline'>{labelType(element.type)}</Badge>
+                      </div>
+                      <p className='truncate text-muted-foreground'>
+                        {element.name || '未命名元素'}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+            </CardContent>
+          </Card>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
 function Field({
   label,
   children,
@@ -2919,6 +3469,76 @@ function Field({
       <Label>{label}</Label>
       {children}
     </div>
+  )
+}
+
+function CapabilityBadge({ enabled, label }: { enabled: boolean; label: string }) {
+  return (
+    <Badge variant={enabled ? 'secondary' : 'outline'} className='rounded-sm'>
+      {label}
+    </Badge>
+  )
+}
+
+function MdkMetric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className='rounded-md border bg-muted/25 p-3'>
+      <div className='text-xs text-muted-foreground'>{label}</div>
+      <div className='mt-1 text-2xl font-semibold'>{value}</div>
+    </div>
+  )
+}
+
+function MappingReportGroup({
+  title,
+  items,
+  empty,
+}: {
+  title: string
+  items: Record<string, unknown>[]
+  empty: string
+}) {
+  return (
+    <div className='rounded-md border p-3'>
+      <h3 className='mb-2 text-sm font-semibold'>{title}</h3>
+      {items.length ? (
+        <ScrollArea className='h-[180px]'>
+          <div className='space-y-2 pr-3 text-xs'>
+            {items.map((item, index) => (
+              <pre
+                key={`${title}-${index}`}
+                className='overflow-x-auto rounded-md bg-muted p-2 font-mono'
+              >
+                {JSON.stringify(item, null, 2)}
+              </pre>
+            ))}
+          </div>
+        </ScrollArea>
+      ) : (
+        <p className='text-sm text-muted-foreground'>{empty}</p>
+      )}
+    </div>
+  )
+}
+
+function adapterCapabilityText(adapter: MdkAdapter) {
+  const labels = [
+    adapter.can_read && '读',
+    adapter.can_write && '写',
+    adapter.can_validate && '校验',
+    adapter.can_commit && '提交',
+    adapter.can_rollback && '回滚',
+  ].filter(Boolean)
+  return labels.join('、') || '无'
+}
+
+function adapterFromFilename(filename: string, adapters: MdkAdapter[]) {
+  const lowerName = filename.toLowerCase()
+  return adapters.find((adapter) =>
+    (adapter.supported_extensions || adapter.formats).some((extension) => {
+      const normalized = extension.startsWith('.') ? extension : `.${extension}`
+      return lowerName.endsWith(normalized.toLowerCase())
+    })
   )
 }
 

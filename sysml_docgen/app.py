@@ -27,6 +27,7 @@ def create_app() -> FastAPI:
         description="SysML document generation service with MMS, VE, MDK, and DocGen capabilities.",
     )
     app.state.store = create_model_store()
+    app.state.import_jobs = {}
     app.state.frontend_dir = frontend_dir
     app.state.frontend_mode = frontend_mode
     app.middleware("http")(request_logging_middleware)

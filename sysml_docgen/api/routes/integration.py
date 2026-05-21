@@ -15,6 +15,14 @@ from ...services.integration_service import IntegrationService
 router = APIRouter()
 
 
+@router.get("/api/mdk/adapters", tags=["MDK"])
+async def mdk_adapters(
+    _: dict[str, str] = Depends(authorize_read),
+    service: IntegrationService = Depends(get_integration_service),
+) -> dict[str, Any]:
+    return {"adapters": service.list_adapters()}
+
+
 @router.post("/api/mdk/parse", tags=["MDK"])
 async def parse_sysml(
     payload: dict[str, Any],
@@ -22,6 +30,34 @@ async def parse_sysml(
     service: IntegrationService = Depends(get_integration_service),
 ) -> dict[str, Any]:
     return service.parse_sysml(payload)
+
+
+@router.post("/api/mdk/import-jobs", tags=["MDK"])
+async def create_mdk_import_job(
+    payload: dict[str, Any],
+    identity: dict[str, str] = Depends(authorize_write),
+    service: IntegrationService = Depends(get_integration_service),
+) -> dict[str, Any]:
+    return service.create_import_job(payload, identity["username"])
+
+
+@router.get("/api/mdk/import-jobs/{job_id}", tags=["MDK"])
+async def get_mdk_import_job(
+    job_id: str,
+    _: dict[str, str] = Depends(authorize_read),
+    service: IntegrationService = Depends(get_integration_service),
+) -> dict[str, Any]:
+    return service.get_import_job(job_id)
+
+
+@router.post("/api/mdk/import-jobs/{job_id}/apply", tags=["MDK"])
+async def apply_mdk_import_job(
+    job_id: str,
+    payload: dict[str, Any],
+    identity: dict[str, str] = Depends(authorize_write),
+    service: IntegrationService = Depends(get_integration_service),
+) -> dict[str, Any]:
+    return service.apply_import_job(job_id, payload, identity["username"])
 
 
 @router.post("/api/mdk/push", tags=["MDK"])

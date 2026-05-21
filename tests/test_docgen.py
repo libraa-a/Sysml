@@ -14,7 +14,7 @@ from sysml_docgen.docgen import (
 )
 from sysml_docgen.metamodel import build_diagram, validate_repository
 from sysml_docgen.store import diff_snapshots
-from sysml_docgen.xmi import elements_to_xmi, parse_xmi_elements
+from sysml_docgen.xmi import elements_to_xmi, parse_xmi_elements, parse_xmi_with_report
 
 
 class DocGenTest(unittest.TestCase):
@@ -217,6 +217,24 @@ class DocGenTest(unittest.TestCase):
         self.assertEqual(parsed["IF-POWER"]["type"], "Interface")
         self.assertEqual(parsed["PRT-28V"]["type"], "Port")
         self.assertIn({"type": "connect", "target": "IF-POWER"}, parsed["PRT-28V"]["relations"])
+
+    def test_xmi_mapping_report_explains_import_choices(self):
+        xmi = """<?xml version="1.0" encoding="UTF-8"?>
+<xmi:XMI xmlns:xmi="http://www.omg.org/spec/XMI/20131001"
+         xmlns:uml="http://www.omg.org/spec/UML/20131001">
+  <uml:Model xmi:id="MODEL" name="Demo">
+    <packagedElement xmi:type="uml:Class" xmi:id="BLK-REPORT" name="ReportBlock" stereotype="block"/>
+    <packagedElement xmi:type="uml:UseCase" xmi:id="UC-SKIP" name="Unsupported"/>
+    <packagedElement xmi:type="uml:Dependency" xmi:id="DEP-1" name="satisfy" client="BLK-REPORT" supplier="REQ-MISSING"/>
+  </uml:Model>
+</xmi:XMI>"""
+
+        result = parse_xmi_with_report(xmi, "cameo")
+        self.assertEqual(result.report.adapter, "cameo")
+        self.assertEqual(result.report.imported, 1)
+        self.assertTrue(result.report.skipped)
+        self.assertTrue(result.report.downgraded)
+        self.assertEqual(result.model["mapping_report"]["imported"], 1)
 
     def test_metamodel_validation_accepts_clean_model(self):
         elements = self.project["branches"]["main"]["elements"]
