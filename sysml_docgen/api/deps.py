@@ -8,6 +8,7 @@ from fastapi import Depends, Header, Request
 
 from ..auth import identity_from_headers
 from ..services.docgen_service import DocgenService
+from ..services.ai_service import AiDocgenService
 from ..services.integration_service import IntegrationService
 from ..services.mms_service import MmsService
 from ..repository import enforce_role
@@ -23,6 +24,10 @@ def get_mms_service(store: Any = Depends(get_store)) -> MmsService:
 
 def get_docgen_service(store: Any = Depends(get_store)) -> DocgenService:
     return DocgenService(store)
+
+
+def get_ai_docgen_service(store: Any = Depends(get_store)) -> AiDocgenService:
+    return AiDocgenService(store)
 
 
 def get_import_jobs(request: Request) -> dict[str, dict[str, Any]]:

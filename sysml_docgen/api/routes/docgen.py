@@ -7,8 +7,9 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
-from ..deps import authorize_read, authorize_write, get_docgen_service
+from ..deps import authorize_read, authorize_write, get_ai_docgen_service, get_docgen_service
 from ...files import delete_output_file, list_output_files, resolve_output_file
+from ...services.ai_service import AiDocgenService
 from ...services.docgen_service import DocgenService
 
 
@@ -39,6 +40,39 @@ async def create_document(
     service: DocgenService = Depends(get_docgen_service),
 ) -> dict[str, Any]:
     return {"document": service.create_document(project_id, branch, payload, identity["username"])}
+
+
+@router.post("/api/projects/{project_id}/branches/{branch}/docgen/ai-draft", tags=["DocGen", "AI"])
+async def ai_docgen_draft(
+    project_id: str,
+    branch: str,
+    payload: dict[str, Any],
+    _: dict[str, str] = Depends(authorize_write),
+    service: AiDocgenService = Depends(get_ai_docgen_service),
+) -> dict[str, Any]:
+    return await service.draft_docgen_template(project_id, branch, payload)
+
+
+@router.post("/api/projects/{project_id}/branches/{branch}/ve/ai-review", tags=["VE", "AI"])
+async def ai_model_review(
+    project_id: str,
+    branch: str,
+    payload: dict[str, Any],
+    _: dict[str, str] = Depends(authorize_read),
+    service: AiDocgenService = Depends(get_ai_docgen_service),
+) -> dict[str, Any]:
+    return await service.review_model(project_id, branch, payload)
+
+
+@router.post("/api/projects/{project_id}/branches/{branch}/ai/chat", tags=["VE", "AI"])
+async def ai_model_chat(
+    project_id: str,
+    branch: str,
+    payload: dict[str, Any],
+    _: dict[str, str] = Depends(authorize_read),
+    service: AiDocgenService = Depends(get_ai_docgen_service),
+) -> dict[str, Any]:
+    return await service.chat_about_model(project_id, branch, payload)
 
 
 @router.get("/api/projects/{project_id}/branches/{branch}/documents/{document_id}", tags=["DocGen"])

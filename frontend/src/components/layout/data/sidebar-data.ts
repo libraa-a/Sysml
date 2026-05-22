@@ -10,6 +10,7 @@ import {
   Network,
   NotebookTabs,
   ShieldCheck,
+  Wrench,
   Waypoints,
   Workflow,
 } from 'lucide-react'
@@ -75,6 +76,11 @@ export const sidebarData: SidebarData = {
               title: 'DocGen Docs',
               url: '/#docgen',
               icon: FileText,
+            },
+            {
+              title: 'MDK',
+              url: '/#mdk',
+              icon: Wrench,
             },
           ],
         },

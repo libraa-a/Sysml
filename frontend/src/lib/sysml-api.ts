@@ -182,6 +182,36 @@ export type DocumentRecord = {
   pdf_base64?: string
 }
 
+export type AiDocgenMode = 'full' | 'summary' | 'trace' | 'review'
+
+export type AiDocgenDraft = {
+  template: string
+  model: string
+  mode: AiDocgenMode
+  summary: {
+    element_count: number
+    type_counts: Record<string, number>
+    validation: Record<string, unknown>
+  }
+}
+
+export type AiModelReview = {
+  review: string
+  model: string
+  summary: AiDocgenDraft['summary']
+}
+
+export type AiChatMessage = {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+export type AiChatResponse = {
+  answer: string
+  model: string
+  summary: AiDocgenDraft['summary']
+}
+
 export type MdkAdapter = {
   id: string
   label: string

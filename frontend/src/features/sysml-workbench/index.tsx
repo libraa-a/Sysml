@@ -1,4 +1,4 @@
-import {
+﻿import {
   useCallback,
   useEffect,
   lazy,
@@ -51,13 +51,16 @@ import {
   Loader2,
   LogIn,
   LogOut,
+  MessageCircle,
   Network,
   Plus,
   RefreshCw,
   RotateCcw,
   Save,
   Search,
+  Send,
   ShieldCheck,
+  Sparkles,
   Trash2,
   Upload,
   UserCircle,
@@ -67,6 +70,11 @@ import {
 import { toast } from 'sonner'
 import {
   api,
+  type AiDocgenDraft,
+  type AiDocgenMode,
+  type AiChatMessage,
+  type AiChatResponse,
+  type AiModelReview,
   defaultElement,
   loadIdentity,
   login,
@@ -114,6 +122,14 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from '@/components/ui/sheet'
 import {
   Select,
   SelectContent,
@@ -251,7 +267,7 @@ const severityLabels = {
   info: 'Info',
 }
 
-const workbenchTabs = ['model', 'diagram', 'trace', 'version', 'docgen', 'mdk'] as const
+const workbenchTabs = ['model', 'diagram', 'trace', 'version', 'docgen', 'mdk', 'assistant'] as const
 
 type WorkbenchTab = (typeof workbenchTabs)[number]
 
@@ -336,6 +352,7 @@ export function SysmlWorkbench() {
   const [currentDocument, setCurrentDocument] = useState<DocumentRecord | null>(
     null
   )
+  const [aiModelReview, setAiModelReview] = useState<AiModelReview | null>(null)
   const [mdkAdapters, setMdkAdapters] = useState<MdkAdapter[]>([])
   const [mdkTool, setMdkTool] = useState('json')
   const [mdkFilename, setMdkFilename] = useState('model.json')
@@ -346,6 +363,8 @@ export function SysmlWorkbench() {
   const [mdkImportJob, setMdkImportJob] = useState<MdkImportJob | null>(null)
   const [mdkCommit, setMdkCommit] = useState(true)
   const [mdkMessage, setMdkMessage] = useState('MDK frontend import')
+  const [assistantQuestion, setAssistantQuestion] = useState('')
+  const [assistantMessages, setAssistantMessages] = useState<AiChatMessage[]>([])
   const [activeTab, setActiveTab] = useState<WorkbenchTab>(() =>
     tabFromHash(window.location.hash)
   )
@@ -1028,6 +1047,50 @@ export function SysmlWorkbench() {
     }
   }
 
+  async function generateAiDocgenDraft(mode: AiDocgenMode) {
+    if (!projectId || !branch) return
+    setBusy(`ai-docgen-${mode}`)
+    try {
+      const result = await api<AiDocgenDraft>(
+        `/api/projects/${encodeURIComponent(projectId)}/branches/${encodeURIComponent(branch)}/docgen/ai-draft`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ mode, template }),
+          identity,
+          role,
+        }
+      )
+      setTemplate(result.template)
+      toast.success('AI DocGen draft generated')
+    } catch (error) {
+      notifyError(error)
+    } finally {
+      setBusy('')
+    }
+  }
+
+  async function runAiModelReview() {
+    if (!projectId || !branch) return
+    setBusy('ai-model-review')
+    try {
+      const result = await api<AiModelReview>(
+        `/api/projects/${encodeURIComponent(projectId)}/branches/${encodeURIComponent(branch)}/ve/ai-review`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ selected_id: selectedId }),
+          identity,
+          role,
+        }
+      )
+      setAiModelReview(result)
+      toast.success('AI model review completed')
+    } catch (error) {
+      notifyError(error)
+    } finally {
+      setBusy('')
+    }
+  }
+
   async function openDocument(documentId: string) {
     if (!projectId || !branch) return
     setBusy(`document-${documentId}`)
@@ -1038,6 +1101,42 @@ export function SysmlWorkbench() {
       )
       setCurrentDocument(payload.document)
     } catch (error) {
+      notifyError(error)
+    } finally {
+      setBusy('')
+    }
+  }
+
+  async function askAssistant() {
+    if (!projectId || !branch) return
+    const question = assistantQuestion.trim()
+    if (!question) {
+      toast.error('请输入问题')
+      return
+    }
+    const nextMessages: AiChatMessage[] = [
+      ...assistantMessages,
+      { role: 'user', content: question },
+    ]
+    setAssistantMessages(nextMessages)
+    setAssistantQuestion('')
+    setBusy('ai-chat')
+    try {
+      const result = await api<AiChatResponse>(
+        `/api/projects/${encodeURIComponent(projectId)}/branches/${encodeURIComponent(branch)}/ai/chat`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ question, history: assistantMessages }),
+          identity,
+          role,
+        }
+      )
+      setAssistantMessages([
+        ...nextMessages,
+        { role: 'assistant', content: result.answer },
+      ])
+    } catch (error) {
+      setAssistantMessages(assistantMessages)
       notifyError(error)
     } finally {
       setBusy('')
@@ -1234,7 +1333,7 @@ export function SysmlWorkbench() {
         <ConfigDrawer />
       </Header>
 
-      <Main fluid className='space-y-5 pb-8'>
+      <Main fluid className='sysml-workbench min-h-[calc(100svh-4rem)] pb-8'>
         {loading ? (
           <div className='flex min-h-[520px] items-center justify-center'>
             <div className='flex items-center gap-3 text-sm text-muted-foreground'>
@@ -1243,26 +1342,33 @@ export function SysmlWorkbench() {
             </div>
           </div>
         ) : (
-          <>
-            <section className='space-y-4'>
-              <div className='rounded-lg border bg-card p-4 shadow-sm'>
-                <div className='flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between'>
+          <div className='sysml-shell space-y-5'>
+            <section className='space-y-4 pt-2'>
+              <div className='sysml-hero rounded-lg p-4 md:p-5'>
+                <div className='flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between'>
                   <div className='min-w-0'>
+                    <div className='sysml-eyebrow mb-2 text-xs font-semibold uppercase'>
+                      MBSE Model Management System
+                    </div>
                     <div className='flex flex-wrap items-center gap-2'>
-                      <h1 className='truncate text-2xl font-bold tracking-tight'>
+                      <h1 className='truncate text-2xl font-semibold tracking-tight md:text-3xl'>
                         {project?.name || 'SysML Project'}
                       </h1>
-                      <Badge variant='outline'>{branch}</Badge>
-                      <Badge variant='secondary'>
+                      <Badge variant='outline' className='rounded-sm'>
+                        branch / {branch}
+                      </Badge>
+                      <Badge variant='secondary' className='rounded-sm'>
                         {branches.find((item) => item.name === branch)?.head ||
                           'working'}
                       </Badge>
                     </div>
-                    <p className='mt-1 text-sm text-muted-foreground'>
+                    <p className='mt-2 max-w-3xl text-sm text-muted-foreground'>
                       {project?.organization || 'Current project'}
+                      <span className='mx-2 text-border'>/</span>
+                      MMS, VE, MDK and DocGen are kept in one traceable workspace.
                     </p>
                   </div>
-                  <div className='grid gap-2 md:grid-cols-[minmax(220px,1fr)_160px_auto] xl:min-w-[720px]'>
+                  <div className='grid gap-2 md:grid-cols-[minmax(220px,1fr)_160px_auto] xl:min-w-[740px]'>
                     <Select value={projectId} onValueChange={setProjectId}>
                       <SelectTrigger className='w-full'>
                         <SelectValue placeholder='Select project' />
@@ -1287,7 +1393,7 @@ export function SysmlWorkbench() {
                         ))}
                       </SelectContent>
                     </Select>
-                    <div className='flex gap-2'>
+                    <div className='flex flex-wrap gap-2 md:flex-nowrap'>
                       <Button
                         variant='outline'
                         onClick={() => exportModel('json')}
@@ -1315,7 +1421,7 @@ export function SysmlWorkbench() {
 
               <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>
                 {stats.map((item) => (
-                  <Card key={item.label} className='shadow-sm'>
+                  <Card key={item.label} className='sysml-card sysml-metric'>
                     <CardHeader className='flex flex-row items-center justify-between space-y-0 pb-2'>
                       <CardTitle className='text-sm font-medium'>
                         {item.label}
@@ -1338,8 +1444,8 @@ export function SysmlWorkbench() {
               onValueChange={(value) => selectTab(value as WorkbenchTab)}
               className='space-y-4'
             >
-              <div className='sticky top-16 z-20 overflow-x-auto border-b bg-background/95 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/75'>
-                <TabsList className='h-10'>
+              <div className='sticky top-16 z-20 overflow-x-auto rounded-lg py-2 backdrop-blur'>
+                <TabsList className='sysml-tabs h-11 p-1'>
                   <TabsTrigger value='model'>
                     <LayoutDashboard className='size-4' />
                     Model
@@ -1364,6 +1470,10 @@ export function SysmlWorkbench() {
                     <Wrench className='size-4' />
                     MDK
                   </TabsTrigger>
+                  <TabsTrigger value='assistant'>
+                    <MessageCircle className='size-4' />
+                    Assistant
+                  </TabsTrigger>
                 </TabsList>
               </div>
 
@@ -1387,12 +1497,14 @@ export function SysmlWorkbench() {
                   setRelationsText={setRelationsText}
                   views={views.length ? views : viewElements}
                   validation={validation}
+                  aiReview={aiModelReview}
                   onNew={() => startNewElement(types[0] || 'Requirement')}
                   onNewView={() => startNewElement('View')}
                   onDelete={deleteElement}
                   onSave={saveElement}
                   onAddRelation={addRelation}
                   onToggleViewElement={toggleViewElement}
+                  onAiReview={runAiModelReview}
                   busy={busy}
                 />
               </TabsContent>
@@ -1470,6 +1582,7 @@ export function SysmlWorkbench() {
                   currentDocument={currentDocument}
                   onReset={() => setTemplate(defaultTemplate)}
                   onGenerate={generateDocument}
+                  onAiDraft={generateAiDocgenDraft}
                   onOpen={openDocument}
                   onDownload={downloadCurrent}
                   busy={busy}
@@ -1498,8 +1611,17 @@ export function SysmlWorkbench() {
                   busy={busy}
                 />
               </TabsContent>
+              <TabsContent value='assistant'>
+                <AssistantTab
+                  messages={assistantMessages}
+                  question={assistantQuestion}
+                  setQuestion={setAssistantQuestion}
+                  onAsk={askAssistant}
+                  busy={busy}
+                />
+              </TabsContent>
             </Tabs>
-          </>
+          </div>
         )}
       </Main>
     </>
@@ -1528,12 +1650,14 @@ type ModelTabProps = {
   setRelationsText: (value: string) => void
   views: SysmlElement[]
   validation: ValidationPayload | null
+  aiReview: AiModelReview | null
   onNew: () => void
   onNewView: () => void
   onDelete: () => void
   onSave: (event: FormEvent) => void
   onAddRelation: () => void
   onToggleViewElement: (elementId: string, checked: boolean) => void
+  onAiReview: () => void
   busy: string
 }
 
@@ -1654,9 +1778,11 @@ function IdentityDialog({
 }
 
 function ModelTab(props: ModelTabProps) {
+  const typeCounts = countBy(props.elements, (item) => item.type)
+
   return (
-    <div className='grid gap-4 xl:grid-cols-[minmax(320px,0.42fr)_minmax(520px,0.58fr)]'>
-      <Card>
+    <div className='grid gap-4 xl:grid-cols-[420px_minmax(0,1fr)]'>
+      <Card className='sysml-card self-start'>
         <CardHeader className='space-y-3'>
           <div className='flex items-center justify-between gap-3'>
             <div>
@@ -1692,9 +1818,23 @@ function ModelTab(props: ModelTabProps) {
               />
             </div>
           </div>
+          <div className='grid grid-cols-3 gap-2 text-xs'>
+            <div className='rounded-md border bg-muted/30 px-3 py-2'>
+              <div className='font-semibold'>{props.elements.length}</div>
+              <div className='text-muted-foreground'>Elements</div>
+            </div>
+            <div className='rounded-md border bg-muted/30 px-3 py-2'>
+              <div className='font-semibold'>{Object.keys(typeCounts).length}</div>
+              <div className='text-muted-foreground'>Types</div>
+            </div>
+            <div className='rounded-md border bg-muted/30 px-3 py-2'>
+              <div className='font-semibold'>{props.validation?.summary.warnings || 0}</div>
+              <div className='text-muted-foreground'>Warnings</div>
+            </div>
+          </div>
         </CardHeader>
         <CardContent className='p-0'>
-          <ScrollArea className='h-[560px]'>
+          <ScrollArea className='h-[520px]'>
             {props.elements.length ? (
               <div className='divide-y'>
                 {props.elements.map((element) => (
@@ -1730,7 +1870,7 @@ function ModelTab(props: ModelTabProps) {
       </Card>
 
       <div className='space-y-4'>
-        <Card>
+        <Card className='sysml-card'>
           <CardHeader>
             <div className='flex items-center justify-between gap-3'>
               <div>
@@ -1917,6 +2057,11 @@ function ModelTab(props: ModelTabProps) {
         </Card>
 
         <ValidationPanel validation={props.validation} />
+        <AiModelReviewPanel
+          review={props.aiReview}
+          busy={props.busy}
+          onReview={props.onAiReview}
+        />
       </div>
     </div>
   )
@@ -1925,7 +2070,7 @@ function ModelTab(props: ModelTabProps) {
 function ValidationPanel({ validation }: { validation: ValidationPayload | null }) {
   if (!validation) return null
   return (
-    <Card>
+    <Card className='sysml-card'>
       <CardHeader>
         <div className='flex items-center justify-between gap-3'>
           <div>
@@ -2058,6 +2203,56 @@ function ViewBindingPanel({
   )
 }
 
+function AiModelReviewPanel({
+  review,
+  busy,
+  onReview,
+}: {
+  review: AiModelReview | null
+  busy: string
+  onReview: () => void
+}) {
+  const loading = busy === 'ai-model-review'
+
+  return (
+    <Card className='sysml-card'>
+      <CardHeader>
+        <div className='flex items-center justify-between gap-3'>
+          <div>
+            <CardTitle>{'AI \u6a21\u578b\u5ba1\u67e5'}</CardTitle>
+            <CardDescription>{'\u57fa\u4e8e\u5f53\u524d VE \u6a21\u578b\u7ed9\u51fa\u4e00\u81f4\u6027\u548c\u8ffd\u6eaf\u5efa\u8bae'}</CardDescription>
+          </div>
+          <Button variant='secondary' size='sm' onClick={onReview} disabled={loading}>
+            {loading ? (
+              <Loader2 className='size-4 animate-spin' />
+            ) : (
+              <Sparkles className='size-4' />
+            )}
+            {'AI \u5ba1\u67e5'}
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <div className='flex items-center gap-2 text-sm text-muted-foreground'>
+            <Loader2 className='size-4 animate-spin' />
+            {'AI \u5ba1\u67e5\u4e2d'}
+          </div>
+        ) : review ? (
+          <div className='rounded-md border bg-muted/20 p-4'>
+            <MarkdownMessage content={review.review} compact />
+          </div>
+        ) : (
+          <EmptyState
+            title={'\u5c1a\u672a\u8fd0\u884c AI \u5ba1\u67e5'}
+            description={'\u70b9\u51fb AI \u5ba1\u67e5\u540e\uff0c\u7cfb\u7edf\u4f1a\u5206\u6790\u5f53\u524d\u6a21\u578b\u7684\u5b8c\u6574\u6027\u3001\u8ffd\u6eaf\u6027\u548c\u6587\u6863\u53ef\u751f\u6210\u6027'}
+          />
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 type DiagramTabProps = {
   diagram: DiagramPayload | null
   diagramType: string
@@ -2085,8 +2280,8 @@ type DiagramTabProps = {
 
 function DiagramTab(props: DiagramTabProps) {
   return (
-    <div className='grid gap-4 xl:grid-cols-[340px_1fr]'>
-      <Card>
+    <div className='grid gap-4 xl:grid-cols-[300px_minmax(0,1fr)]'>
+      <Card className='sysml-card self-start xl:sticky xl:top-32'>
         <CardHeader>
           <CardTitle>图谱设置</CardTitle>
           <CardDescription>按不同 SysML 视角查看关系网络</CardDescription>
@@ -2142,7 +2337,7 @@ function DiagramTab(props: DiagramTabProps) {
           <Separator />
           <div className='grid gap-2'>
             <p className='text-sm font-medium'>当前元素</p>
-            <ScrollArea className='h-[360px] rounded-md border'>
+            <ScrollArea className='h-[260px] rounded-md border'>
               <div className='divide-y'>
                 {props.elements.map((element) => (
                   <button
@@ -2164,7 +2359,7 @@ function DiagramTab(props: DiagramTabProps) {
         </CardContent>
       </Card>
 
-      <Card className='overflow-hidden'>
+      <Card className='sysml-card overflow-hidden'>
         <CardHeader>
           <div className='flex items-center justify-between gap-3'>
             <div>
@@ -2500,14 +2695,14 @@ function DiagramCanvas({
 
   if (!diagram || !diagram.nodes.length) {
     return (
-      <div className='h-[650px] bg-muted/30'>
+      <div className='h-[560px] bg-muted/30'>
         <EmptyState title='暂无图谱' description='当前模型没有可绘制的节点' />
       </div>
     )
   }
 
   return (
-    <div className='h-[720px] bg-muted/30'>
+    <div className='h-[620px] bg-muted/30'>
       <ReactFlow<SysmlFlowNode, SysmlFlowEdge>
         nodes={nodes}
         edges={edges}
@@ -2523,8 +2718,8 @@ function DiagramCanvas({
           setEdgeRelationType(edge.data?.relationType || relationTypes[0] || '')
         }}
         fitView
-        fitViewOptions={{ padding: 0.2 }}
-        minZoom={0.2}
+        fitViewOptions={{ padding: 0.08, maxZoom: 1.05 }}
+        minZoom={0.35}
         maxZoom={2.5}
         panOnDrag
         zoomOnScroll
@@ -2549,6 +2744,7 @@ function DiagramCanvas({
         <MiniMap
           pannable
           zoomable
+          style={{ width: 160, height: 110 }}
           nodeBorderRadius={8}
           nodeColor={(node) =>
             node.selected ? 'var(--primary)' : 'var(--muted-foreground)'
@@ -2556,7 +2752,7 @@ function DiagramCanvas({
           maskColor='color-mix(in oklch, var(--background) 70%, transparent)'
         />
         <Controls position='bottom-left' />
-        <div className='nodrag nowheel absolute right-3 top-3 z-10 grid w-[280px] gap-3 rounded-md border bg-background/95 p-3 shadow-sm backdrop-blur'>
+        <div className='nodrag nowheel absolute right-3 top-3 z-10 grid w-[220px] gap-3 rounded-md border bg-background/95 p-3 shadow-sm backdrop-blur'>
           <Field label='新连线类型'>
             <Select value={edgeRelationType} onValueChange={setEdgeRelationType}>
               <SelectTrigger className='w-full'>
@@ -2731,14 +2927,14 @@ function layoutDiagramNodes(diagram: DiagramPayload, elements: SysmlElement[]) {
       return left.id.localeCompare(right.id)
     })
     const row = peers.findIndex((peer) => peer.id === node.id)
-    const columnWidth = 330
-    const rowHeight = 148
-    const offset = (column % 2) * 32
+    const columnWidth = 290
+    const rowHeight = 132
+    const offset = (column % 2) * 24
     return {
       ...node,
       position: {
-        x: 80 + column * columnWidth,
-        y: 70 + Math.max(row, 0) * rowHeight + offset,
+        x: 60 + column * columnWidth,
+        y: 48 + Math.max(row, 0) * rowHeight + offset,
       },
     }
   })
@@ -2837,7 +3033,7 @@ function TraceTab({
   onRefresh: () => void
 }) {
   return (
-    <Card>
+    <Card className='sysml-card'>
       <CardHeader>
         <div className='flex items-center justify-between gap-3'>
           <div>
@@ -2929,16 +3125,16 @@ function VersionTab(props: VersionTabProps) {
     { id: 'working', label: 'working' },
     ...props.tags.map((tag) => ({
       id: `tag:${tag.id}`,
-      label: `tag:${tag.name} / ${tag.commit}`,
+      label: `tag:${tag.name} / ${shortLabel(tag.commit, 14)}`,
     })),
     ...props.commits.map((commit) => ({
       id: commit.id,
-      label: `${commit.id} / ${commit.message}`,
+      label: `${shortLabel(commit.id, 13)} / ${shortLabel(commit.message, 28)}`,
     })),
   ]
   return (
-    <div className='grid gap-4 xl:grid-cols-[380px_1fr]'>
-      <Card>
+    <div className='space-y-4'>
+      <Card className='sysml-card'>
         <CardHeader>
           <div className='flex items-center justify-between'>
             <div>
@@ -2950,12 +3146,12 @@ function VersionTab(props: VersionTabProps) {
             </Button>
           </div>
         </CardHeader>
-        <CardContent className='space-y-5'>
+        <CardContent className='grid gap-4 lg:grid-cols-2 2xl:grid-cols-[1.25fr_1.25fr_1fr_1fr_1fr] [&>div]:min-w-0 [&>div]:rounded-md [&>div]:border [&>div]:bg-muted/20 [&>div]:p-3 [&>[data-orientation=horizontal]]:hidden'>
           <div className='grid gap-3'>
-            <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-1'>
+            <div className='grid gap-3 sm:grid-cols-2'>
               <Field label='Diff From'>
                 <Select value={props.diffFrom} onValueChange={props.setDiffFrom}>
-                  <SelectTrigger className='w-full'>
+                  <SelectTrigger className='w-full min-w-0 overflow-hidden [&>span]:truncate'>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -2969,7 +3165,7 @@ function VersionTab(props: VersionTabProps) {
               </Field>
               <Field label='Diff To'>
                 <Select value={props.diffTo} onValueChange={props.setDiffTo}>
-                  <SelectTrigger className='w-full'>
+                  <SelectTrigger className='w-full min-w-0 overflow-hidden [&>span]:truncate'>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -2994,7 +3190,7 @@ function VersionTab(props: VersionTabProps) {
                 value={props.rollbackCommit}
                 onValueChange={props.setRollbackCommit}
               >
-                <SelectTrigger className='w-full'>
+                <SelectTrigger className='w-full min-w-0 overflow-hidden [&>span]:truncate'>
                   <SelectValue placeholder='选择提交' />
                 </SelectTrigger>
                 <SelectContent>
@@ -3078,7 +3274,7 @@ function VersionTab(props: VersionTabProps) {
       </Card>
 
       <div className='space-y-4'>
-        <Card>
+        <Card className='sysml-card'>
           <CardHeader>
             <div className='flex items-center justify-between gap-3'>
               <div>
@@ -3125,8 +3321,8 @@ function VersionTab(props: VersionTabProps) {
           </CardContent>
         </Card>
 
-        <div className='grid gap-4 xl:grid-cols-3'>
-          <Card>
+      <div className='grid gap-4 xl:grid-cols-3'>
+          <Card className='sysml-card'>
             <CardHeader>
               <CardTitle>标签基线</CardTitle>
               <CardDescription>{props.tags.length} 个只读快照</CardDescription>
@@ -3161,7 +3357,7 @@ function VersionTab(props: VersionTabProps) {
               </ScrollArea>
             </CardContent>
           </Card>
-          <Card>
+          <Card className='sysml-card'>
             <CardHeader>
               <CardTitle>提交记录</CardTitle>
               <CardDescription>{props.commits.length} 条提交</CardDescription>
@@ -3185,7 +3381,7 @@ function VersionTab(props: VersionTabProps) {
               </ScrollArea>
             </CardContent>
           </Card>
-          <Card>
+          <Card className='sysml-card'>
             <CardHeader>
               <CardTitle>审计日志</CardTitle>
               <CardDescription>{props.auditEvents.length} 条事件</CardDescription>
@@ -3248,28 +3444,31 @@ type DocgenTabProps = {
   currentDocument: DocumentRecord | null
   onReset: () => void
   onGenerate: () => void
+  onAiDraft: (mode: AiDocgenMode) => void
   onOpen: (id: string) => void
   onDownload: (format: 'html' | 'markdown' | 'pdf') => void
   busy: string
 }
 
 function DocgenTab(props: DocgenTabProps) {
-  const viewOutline = useMemo(() => buildViewOutline(props.template), [
-    props.template,
-  ])
-
   return (
-    <div className='grid gap-4 xl:grid-cols-[minmax(360px,0.42fr)_minmax(560px,0.58fr)]'>
-      <Card>
+    <div className='sysml-doc-grid'>
+      <Card className='sysml-card'>
         <CardHeader>
           <div className='flex items-center justify-between gap-3'>
             <div>
-              <CardTitle>DocGen 模板</CardTitle>
-              <CardDescription>使用占位符生成 HTML / Markdown / PDF</CardDescription>
+              <CardTitle>DocGen {'\u6a21\u677f'}</CardTitle>
+              <CardDescription>{'\u4f7f\u7528\u5360\u4f4d\u7b26\u751f\u6210 HTML / Markdown / PDF'}</CardDescription>
             </div>
-            <Button variant='outline' size='sm' onClick={props.onReset}>
-              <RotateCcw className='size-4' />
-            </Button>
+            <div className='flex gap-2'>
+              <DocumentHistorySheet
+                documents={props.documents}
+                onOpen={props.onOpen}
+              />
+              <Button variant='outline' size='sm' onClick={props.onReset}>
+                <RotateCcw className='size-4' />
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent className='space-y-4'>
@@ -3305,6 +3504,18 @@ function DocgenTab(props: DocgenTabProps) {
           </Suspense>
           <div className='flex flex-wrap gap-2'>
             <Button
+              variant='secondary'
+              onClick={() => props.onAiDraft('full')}
+              disabled={props.busy === 'ai-docgen-full'}
+            >
+              {props.busy === 'ai-docgen-full' ? (
+                <Loader2 className='size-4 animate-spin' />
+              ) : (
+                <Sparkles className='size-4' />
+              )}
+              {'AI \u751f\u6210\u7ae0\u8282'}
+            </Button>
+            <Button
               onClick={props.onGenerate}
               disabled={props.busy === 'generate-document'}
             >
@@ -3313,7 +3524,7 @@ function DocgenTab(props: DocgenTabProps) {
               ) : (
                 <FileText className='size-4' />
               )}
-              生成
+              {'\u751f\u6210'}
             </Button>
             <Button variant='outline' onClick={() => props.onDownload('markdown')}>
               Markdown
@@ -3325,67 +3536,16 @@ function DocgenTab(props: DocgenTabProps) {
               PDF
             </Button>
           </div>
-          <Separator />
-          <div>
-            <h3 className='mb-2 text-sm font-semibold'>View Outline</h3>
-            <div className='mb-4 rounded-md border bg-muted/30 p-3'>
-              {viewOutline.length ? (
-                <div className='space-y-2'>
-                  {viewOutline.map((view) => (
-                    <div
-                      key={`${view.level}-${view.title}`}
-                      className={cn(
-                        'flex items-center gap-2 text-sm',
-                        view.level > 2 && 'pl-4 text-muted-foreground'
-                      )}
-                    >
-                      <FileText className='size-4 text-muted-foreground' />
-                      <span className='truncate'>{view.title}</span>
-                      <Badge variant='outline' className='ms-auto'>
-                        h{view.level}
-                      </Badge>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className='text-sm text-muted-foreground'>
-                  Add Markdown headings to define document views.
-                </p>
-              )}
-            </div>
-            <h3 className='mb-2 text-sm font-semibold'>历史文档</h3>
-            <ScrollArea className='h-[220px] rounded-md border'>
-              {props.documents.length ? (
-                <div className='divide-y'>
-                  {props.documents.map((document) => (
-                    <button
-                      key={document.id}
-                      type='button'
-                      onClick={() => props.onOpen(document.id)}
-                      className='grid w-full gap-1 px-3 py-2 text-left text-sm hover:bg-muted'
-                    >
-                      <span className='font-mono font-semibold'>{document.id}</span>
-                      <span className='text-xs text-muted-foreground'>
-                        {document.created_at} / {document.model_hash}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <EmptyState title='暂无文档' description='生成后会出现在这里' />
-              )}
-            </ScrollArea>
-          </div>
         </CardContent>
       </Card>
 
-      <Card className='overflow-hidden'>
+      <Card className='sysml-card overflow-hidden'>
         <CardHeader>
           <div className='flex items-center justify-between gap-3'>
             <div>
-              <CardTitle>文档预览</CardTitle>
+              <CardTitle>{'\u6587\u6863\u9884\u89c8'}</CardTitle>
               <CardDescription>
-                {props.currentDocument?.id || '尚未生成文档'}
+                {props.currentDocument?.id || '\u5c1a\u672a\u751f\u6210\u6587\u6863'}
               </CardDescription>
             </div>
             {props.currentDocument && <Badge variant='secondary'>HTML</Badge>}
@@ -3394,18 +3554,67 @@ function DocgenTab(props: DocgenTabProps) {
         <CardContent className='p-0'>
           {props.currentDocument?.html ? (
             <iframe
-              title='文档预览'
+              title='Document preview'
               srcDoc={props.currentDocument.html}
               className='h-[720px] w-full border-0 bg-background'
             />
           ) : (
             <div className='h-[720px]'>
-              <EmptyState title='等待生成' description='点击生成按钮预览文档' />
+              <EmptyState title={'\u7b49\u5f85\u751f\u6210'} description={'\u70b9\u51fb\u751f\u6210\u6309\u94ae\u9884\u89c8\u6587\u6863'} />
             </div>
           )}
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+function DocumentHistorySheet({
+  documents,
+  onOpen,
+}: {
+  documents: DocumentRecord[]
+  onOpen: (id: string) => void
+}) {
+  return (
+    <Sheet>
+      <SheetTrigger asChild>
+        <Button variant='outline' size='sm'>
+          <FileText className='size-4' />
+          {'\u5386\u53f2'}
+        </Button>
+      </SheetTrigger>
+      <SheetContent side='right' className='w-[420px] sm:max-w-[420px]'>
+        <SheetHeader>
+          <SheetTitle>Document history</SheetTitle>
+          <SheetDescription>{'\u6253\u5f00\u5df2\u751f\u6210\u7684\u6587\u6863\u7248\u672c'}</SheetDescription>
+        </SheetHeader>
+        <ScrollArea className='min-h-0 flex-1 px-4 pb-4'>
+          {documents.length ? (
+            <div className='space-y-2'>
+              {documents.map((document) => (
+                <button
+                  key={document.id}
+                  type='button'
+                  onClick={() => onOpen(document.id)}
+                  className='grid w-full gap-1 rounded-md border bg-background px-3 py-3 text-left text-sm transition-colors hover:bg-muted'
+                >
+                  <span className='truncate font-mono font-semibold'>{document.id}</span>
+                  <span className='truncate text-xs text-muted-foreground'>
+                    {document.created_at}
+                  </span>
+                  <span className='truncate font-mono text-[11px] text-muted-foreground'>
+                    {document.model_hash}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <EmptyState title={'\u6682\u65e0\u6587\u6863'} description={'\u751f\u6210\u540e\u4f1a\u51fa\u73b0\u5728\u8fd9\u91cc'} />
+          )}
+        </ScrollArea>
+      </SheetContent>
+    </Sheet>
   )
 }
 
@@ -3430,6 +3639,179 @@ type MdkTabProps = {
   busy: string
 }
 
+type AssistantTabProps = {
+  messages: AiChatMessage[]
+  question: string
+  setQuestion: (value: string) => void
+  onAsk: () => void
+  busy: string
+}
+
+function AssistantTab(props: AssistantTabProps) {
+  const examples = [
+    '\u5f53\u524d\u6a21\u578b\u6709\u54ea\u4e9b\u9700\u6c42\u8fd8\u6ca1\u6709\u9a8c\u8bc1\u95ed\u73af\uff1f',
+    '\u89e3\u91ca\u4e00\u4e0b\u8fd9\u4e2a\u7cfb\u7edf\u7684\u8ffd\u6eaf\u77e9\u9635\u3002',
+    '\u54ea\u4e9b\u6a21\u578b\u5143\u7d20\u9002\u5408\u5199\u8fdb\u7cfb\u7edf\u67b6\u6784\u7ae0\u8282\uff1f',
+    '\u8fd9\u4e2a\u6a21\u578b\u76ee\u524d\u6700\u5927\u7684\u8d28\u91cf\u98ce\u9669\u662f\u4ec0\u4e48\uff1f',
+  ]
+
+  return (
+    <div className='grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]'>
+      <Card className='sysml-card'>
+        <CardHeader>
+          <div className='flex items-center gap-2'>
+            <div className='flex size-9 items-center justify-center rounded-md bg-primary text-primary-foreground'>
+              <Sparkles className='size-4' />
+            </div>
+            <div>
+              <CardTitle>SysML Assistant</CardTitle>
+              <CardDescription>{'\u57fa\u4e8e MMS \u6a21\u578b\u7684\u95ee\u7b54\u52a9\u624b'}</CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className='space-y-4'>
+          <div className='space-y-2'>
+            <div className='text-xs font-medium uppercase text-muted-foreground'>
+              {'\u63a8\u8350\u95ee\u9898'}
+            </div>
+            {examples.map((example) => (
+              <button
+                key={example}
+                type='button'
+                className='w-full rounded-md border bg-background px-3 py-2 text-left text-sm leading-5 transition-colors hover:bg-muted'
+                onClick={() => props.setQuestion(example)}
+              >
+                {example}
+              </button>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className='sysml-card overflow-hidden'>
+        <CardHeader className='border-b bg-muted/20'>
+          <div className='flex items-center justify-between gap-3'>
+            <div className='flex items-center gap-3'>
+              <div className='flex size-10 items-center justify-center rounded-md border bg-background'>
+                <MessageCircle className='size-5 text-primary' />
+              </div>
+              <div>
+                <CardTitle>{'\u6a21\u578b\u95ee\u7b54\u7ebf\u7a0b'}</CardTitle>
+                <CardDescription>{'\u8be2\u95ee\u9700\u6c42\u3001\u6a21\u5757\u3001\u8ffd\u8e2a\u5173\u7cfb\u6216\u6587\u6863\u751f\u6210\u6d41\u7a0b'}</CardDescription>
+              </div>
+            </div>
+            <Badge variant='secondary'>Assistant</Badge>
+          </div>
+        </CardHeader>
+        <CardContent className='grid h-[680px] grid-rows-[1fr_auto] gap-0 p-0'>
+          <ScrollArea className='min-h-0 p-5'>
+            {props.messages.length || props.busy === 'ai-chat' ? (
+              <div className='space-y-5'>
+                {props.messages.map((message, index) => (
+                  <AssistantMessageBubble
+                    key={`${message.role}-${index}`}
+                    message={message}
+                  />
+                ))}
+                {props.busy === 'ai-chat' ? <AssistantLoadingBubble /> : null}
+              </div>
+            ) : (
+              <div className='flex h-[460px] items-center justify-center'>
+                <div className='max-w-md text-center'>
+                  <div className='mx-auto flex size-12 items-center justify-center rounded-md border bg-background'>
+                    <Sparkles className='size-5 text-primary' />
+                  </div>
+                  <h3 className='mt-4 text-base font-semibold'>{'\u5f00\u59cb\u8be2\u95ee\u6a21\u578b'}</h3>
+                  <p className='mt-2 text-sm text-muted-foreground'>
+                    {'\u4f8b\u5982\u8be2\u95ee\u54ea\u4e9b\u9700\u6c42\u672a\u95ed\u73af\u3001\u67d0\u4e2a\u5143\u7d20\u7684\u4f9d\u636e\u3001\u6216\u8005\u5982\u4f55\u89e3\u91ca\u8ffd\u8e2a\u77e9\u9635\u3002'}
+                  </p>
+                </div>
+              </div>
+            )}
+          </ScrollArea>
+          <div className='border-t bg-background p-4'>
+            <div className='rounded-lg border bg-muted/20 p-2'>
+              <Textarea
+                rows={3}
+                value={props.question}
+                onChange={(event) => props.setQuestion(event.target.value)}
+                placeholder={'\u4f8b\u5982\uff1a\u54ea\u4e9b\u9700\u6c42\u8fd8\u6ca1\u6709\u6d4b\u8bd5\u7528\u4f8b\uff1f'}
+                className='min-h-[86px] resize-none border-0 bg-transparent shadow-none focus-visible:ring-0'
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+                    event.preventDefault()
+                    props.onAsk()
+                  }
+                }}
+              />
+              <div className='flex items-center justify-between gap-2 px-2 pb-1'>
+                <span className='text-xs text-muted-foreground'>{'Ctrl + Enter \u53d1\u9001'}</span>
+                <Button
+                  type='button'
+                  onClick={props.onAsk}
+                  disabled={props.busy === 'ai-chat'}
+                >
+                  {props.busy === 'ai-chat' ? (
+                    <Loader2 className='size-4 animate-spin' />
+                  ) : (
+                    <Send className='size-4' />
+                  )}
+                  {'\u53d1\u9001'}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+function AssistantMessageBubble({ message }: { message: AiChatMessage }) {
+  const isUser = message.role === 'user'
+  return (
+    <div className={cn('flex gap-3', isUser && 'justify-end')}>
+      {!isUser ? (
+        <div className='flex size-9 shrink-0 items-center justify-center rounded-md border bg-background'>
+          <Sparkles className='size-4 text-primary' />
+        </div>
+      ) : null}
+      <div
+        className={cn(
+          'max-w-[82%] rounded-lg border px-4 py-3 text-sm leading-6 shadow-sm',
+          isUser ? 'bg-primary text-primary-foreground' : 'bg-background'
+        )}
+      >
+        <div className='mb-2 flex items-center gap-2 text-xs font-medium opacity-80'>
+          <span>{isUser ? '\u4f60' : 'Assistant'}</span>
+          {!isUser ? <Badge variant='outline'>{'\u6a21\u578b\u4e0a\u4e0b\u6587'}</Badge> : null}
+        </div>
+        {isUser ? (
+          <div className='whitespace-pre-wrap'>{message.content}</div>
+        ) : (
+          <MarkdownMessage content={message.content} compact />
+        )}
+      </div>
+    </div>
+  )
+}
+
+function AssistantLoadingBubble() {
+  return (
+    <div className='flex gap-3'>
+      <div className='flex size-9 shrink-0 items-center justify-center rounded-md border bg-background'>
+        <Sparkles className='size-4 text-primary' />
+      </div>
+      <div className='max-w-[82%] rounded-lg border bg-background px-4 py-3 shadow-sm'>
+        <div className='mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground'>
+          <Loader2 className='size-3.5 animate-spin' />
+          Assistant {'\u6b63\u5728\u5206\u6790'}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function MdkTab(props: MdkTabProps) {
   const selectedAdapter = props.adapters.find((adapter) => adapter.id === props.tool)
   const report = props.parseResult?.mapping_report
@@ -3451,7 +3833,7 @@ function MdkTab(props: MdkTabProps) {
   return (
     <div className='grid gap-4 xl:grid-cols-[minmax(360px,0.42fr)_minmax(560px,0.58fr)]'>
       <div className='space-y-4'>
-        <Card>
+        <Card className='sysml-card'>
           <CardHeader>
             <div className='flex items-center justify-between gap-3'>
               <div>
@@ -3519,7 +3901,7 @@ function MdkTab(props: MdkTabProps) {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className='sysml-card'>
           <CardHeader>
             <CardTitle>导入设置</CardTitle>
             <CardDescription>
@@ -3578,7 +3960,7 @@ function MdkTab(props: MdkTabProps) {
       </div>
 
       <div className='space-y-4'>
-        <Card>
+        <Card className='sysml-card'>
           <CardHeader>
             <div className='flex items-center justify-between gap-3'>
               <div>
@@ -3654,7 +4036,7 @@ function MdkTab(props: MdkTabProps) {
         </Card>
 
         {props.importJob && (
-          <Card>
+          <Card className='sysml-card'>
             <CardHeader>
               <div className='flex items-center justify-between gap-3'>
                 <div>
@@ -3687,7 +4069,7 @@ function MdkTab(props: MdkTabProps) {
           </Card>
         )}
 
-        <Card>
+        <Card className='sysml-card'>
           <CardHeader>
             <div className='flex items-center justify-between gap-3'>
               <div>
@@ -3745,7 +4127,7 @@ function MdkTab(props: MdkTabProps) {
         </Card>
 
         {props.parseResult?.parsed_model.elements.length ? (
-          <Card>
+          <Card className='sysml-card'>
             <CardHeader>
               <CardTitle>解析出的元素</CardTitle>
               <CardDescription>
@@ -3868,17 +4250,6 @@ function tabFromHash(hash: string): WorkbenchTab {
     : 'model'
 }
 
-function buildViewOutline(template: string) {
-  return template
-    .split(/\r?\n/)
-    .map((line) => line.match(/^(#{1,4})\s+(.+)$/))
-    .filter((match): match is RegExpMatchArray => Boolean(match))
-    .map((match) => ({
-      level: match[1].length,
-      title: match[2].trim(),
-    }))
-}
-
 function EmptyState({
   title,
   description,
@@ -3999,4 +4370,202 @@ function downloadBase64(filename: string, base64Text: string, type: string) {
   link.click()
   link.remove()
   URL.revokeObjectURL(url)
+}
+
+function shortLabel(value: string, maxLength: number) {
+  if (value.length <= maxLength) return value
+  return `${value.slice(0, Math.max(0, maxLength - 1))}…`
+}
+
+function MarkdownMessage({
+  content,
+  compact,
+}: {
+  content: string
+  compact?: boolean
+}) {
+  const blocks = parseMarkdownBlocks(content)
+  return (
+    <div className={cn('space-y-3 leading-6', compact ? 'text-sm' : 'text-[15px]')}>
+      {blocks.map((block, index) => {
+        if (block.type === 'heading') {
+          const HeadingTag = block.level === 2 ? 'h3' : 'h4'
+          return (
+            <HeadingTag
+              key={`${block.type}-${index}`}
+              className={cn(
+                'font-semibold tracking-normal text-foreground',
+                block.level === 2 ? 'text-base' : 'text-sm'
+              )}
+            >
+              {renderInlineMarkdown(block.text)}
+            </HeadingTag>
+          )
+        }
+        if (block.type === 'list') {
+          return (
+            <ul key={`${block.type}-${index}`} className='space-y-1.5'>
+              {block.items.map((item, itemIndex) => (
+                <li key={`${item}-${itemIndex}`} className='flex gap-2'>
+                  <CheckCircle2 className='mt-1 size-3.5 shrink-0 text-emerald-600' />
+                  <span>{renderInlineMarkdown(item)}</span>
+                </li>
+              ))}
+            </ul>
+          )
+        }
+        if (block.type === 'table') {
+          return (
+            <div
+              key={`${block.type}-${index}`}
+              className='overflow-x-auto rounded-md border'
+            >
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    {block.headers.map((header, headerIndex) => (
+                      <TableHead key={`${header}-${headerIndex}`}>
+                        {renderInlineMarkdown(header)}
+                      </TableHead>
+                    ))}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {block.rows.map((row, rowIndex) => (
+                    <TableRow key={`row-${rowIndex}`}>
+                      {block.headers.map((_, cellIndex) => (
+                        <TableCell key={`cell-${rowIndex}-${cellIndex}`}>
+                          {renderInlineMarkdown(row[cellIndex] || '')}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )
+        }
+        return (
+          <p key={`${block.type}-${index}`} className='text-muted-foreground'>
+            {renderInlineMarkdown(block.text)}
+          </p>
+        )
+      })}
+    </div>
+  )
+}
+
+type MarkdownBlock =
+  | { type: 'heading'; level: number; text: string }
+  | { type: 'paragraph'; text: string }
+  | { type: 'list'; items: string[] }
+  | { type: 'table'; headers: string[]; rows: string[][] }
+
+function parseMarkdownBlocks(content: string): MarkdownBlock[] {
+  const blocks: MarkdownBlock[] = []
+  let paragraph: string[] = []
+  let listItems: string[] = []
+  let tableRows: string[][] = []
+
+  const flushParagraph = () => {
+    if (paragraph.length) {
+      blocks.push({ type: 'paragraph', text: paragraph.join(' ') })
+      paragraph = []
+    }
+  }
+  const flushList = () => {
+    if (listItems.length) {
+      blocks.push({ type: 'list', items: listItems })
+      listItems = []
+    }
+  }
+  const flushTable = () => {
+    if (tableRows.length >= 2) {
+      const [headers, separator, ...rows] = tableRows
+      if (isMarkdownTableSeparator(separator)) {
+        blocks.push({ type: 'table', headers, rows })
+      } else {
+        paragraph.push(...tableRows.map((row) => `| ${row.join(' | ')} |`))
+      }
+    } else if (tableRows.length) {
+      paragraph.push(...tableRows.map((row) => `| ${row.join(' | ')} |`))
+    }
+    tableRows = []
+  }
+
+  content.split(/\r?\n/).forEach((rawLine) => {
+    const line = rawLine.trim()
+    if (!line) {
+      flushTable()
+      flushParagraph()
+      flushList()
+      return
+    }
+    if (isMarkdownTableRow(line)) {
+      flushParagraph()
+      flushList()
+      tableRows.push(splitMarkdownTableRow(line))
+      return
+    }
+    flushTable()
+    const heading = line.match(/^(#{2,4})\s+(.+)$/)
+    if (heading) {
+      flushParagraph()
+      flushList()
+      blocks.push({
+        type: 'heading',
+        level: heading[1].length,
+        text: heading[2].trim(),
+      })
+      return
+    }
+    const list = line.match(/^[-*]\s+(.+)$/)
+    if (list) {
+      flushParagraph()
+      listItems.push(list[1].trim())
+      return
+    }
+    flushList()
+    paragraph.push(line)
+  })
+  flushTable()
+  flushParagraph()
+  flushList()
+  return blocks
+}
+
+function isMarkdownTableRow(line: string) {
+  return line.startsWith('|') && line.endsWith('|') && line.includes('|')
+}
+
+function splitMarkdownTableRow(line: string) {
+  return line
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map((cell) => cell.trim())
+}
+
+function isMarkdownTableSeparator(row: string[]) {
+  return row.length > 0 && row.every((cell) => /^:?-{3,}:?$/.test(cell.trim()))
+}
+
+function renderInlineMarkdown(text: string) {
+  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g)
+  return parts.map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={index}>{part.slice(2, -2)}</strong>
+    }
+    if (part.startsWith('`') && part.endsWith('`')) {
+      return (
+        <code
+          key={index}
+          className='rounded bg-muted px-1 py-0.5 font-mono text-[0.9em]'
+        >
+          {part.slice(1, -1)}
+        </code>
+      )
+    }
+    return <span key={index}>{part}</span>
+  })
 }

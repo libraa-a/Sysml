@@ -14,6 +14,10 @@ STATIC_DIR = ROOT / "static"
 FRONTEND_DIST_DIR = Path(os.environ.get("SYSML_FRONTEND_DIST", ROOT / "frontend" / "dist"))
 ALLOW_STATIC_FRONTEND = os.environ.get("SYSML_ALLOW_STATIC_FRONTEND", "").strip().lower() in {"1", "true", "yes", "on"}
 MAX_MODEL_BYTES = int(os.environ.get("SYSML_MAX_MODEL_BYTES", str(10 * 1024 * 1024)))
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+DEEPSEEK_BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
+DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat").strip() or "deepseek-chat"
+DEEPSEEK_TIMEOUT = float(os.environ.get("DEEPSEEK_TIMEOUT", "45"))
 
 
 def determine_frontend_dir(
