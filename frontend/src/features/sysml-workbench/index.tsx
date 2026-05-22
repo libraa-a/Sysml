@@ -1523,6 +1523,7 @@ export function SysmlWorkbench() {
                   aiReview={aiModelReview}
                   onNew={() => startNewElement(types[0] || 'Requirement')}
                   onNewView={() => startNewElement('View')}
+                  onNewViewpoint={() => startNewElement('Viewpoint')}
                   onDelete={deleteElement}
                   onSave={saveElement}
                   onAddRelation={addRelation}
@@ -1679,6 +1680,7 @@ type ModelTabProps = {
   aiReview: AiModelReview | null
   onNew: () => void
   onNewView: () => void
+  onNewViewpoint: () => void
   onDelete: () => void
   onSave: (event: FormEvent) => void
   onAddRelation: () => void
@@ -1907,13 +1909,67 @@ function ModelTab(props: ModelTabProps) {
                   First-class model views for scoped Graph and Docs output.
                 </CardDescription>
               </div>
-              <Button size='sm' variant='outline' onClick={props.onNewView}>
-                <Plus className='size-4' />
-                New View
-              </Button>
+              <div className='flex flex-wrap gap-2'>
+                <Button size='sm' variant='outline' onClick={props.onNewViewpoint}>
+                  <Plus className='size-4' />
+                  New Viewpoint
+                </Button>
+                <Button size='sm' variant='outline' onClick={props.onNewView}>
+                  <Plus className='size-4' />
+                  New View
+                </Button>
+              </div>
             </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className='space-y-4'>
+            <div>
+              <div className='mb-2 flex items-center justify-between gap-2'>
+                <div className='text-sm font-semibold'>Viewpoints</div>
+                <Badge variant='outline'>{props.viewpoints.length}</Badge>
+              </div>
+              {props.viewpoints.length ? (
+                <div className='grid gap-2 md:grid-cols-2'>
+                  {props.viewpoints.map((viewpoint) => {
+                    const attributes = viewpoint.attributes || {}
+                    return (
+                      <button
+                        key={viewpoint.id}
+                        type='button'
+                        onClick={() => props.setSelectedId(viewpoint.id)}
+                        className={cn(
+                          'rounded-md border p-3 text-left transition-colors hover:bg-muted/60',
+                          props.selectedId === viewpoint.id && 'border-primary bg-muted'
+                        )}
+                      >
+                        <div className='flex items-center justify-between gap-2'>
+                          <span className='font-mono text-sm font-semibold'>
+                            {viewpoint.id}
+                          </span>
+                          <Badge variant='secondary'>Viewpoint</Badge>
+                        </div>
+                        <div className='mt-1 text-sm font-medium'>
+                          {viewpoint.name || viewpoint.id}
+                        </div>
+                        <p className='mt-1 line-clamp-2 text-xs text-muted-foreground'>
+                          {String(attributes.purpose || viewpoint.description || 'No purpose yet')}
+                        </p>
+                      </button>
+                    )
+                  })}
+                </div>
+              ) : (
+                <EmptyState
+                  title='No Viewpoints yet'
+                  description='Create a Viewpoint first, then select it in a View.'
+                />
+              )}
+            </div>
+            <Separator />
+            <div>
+              <div className='mb-2 flex items-center justify-between gap-2'>
+                <div className='text-sm font-semibold'>Views</div>
+                <Badge variant='outline'>{props.views.length}</Badge>
+              </div>
             {props.views.length ? (
               <div className='grid gap-2 md:grid-cols-2'>
                 {props.views.map((view) => {
@@ -1954,6 +2010,7 @@ function ModelTab(props: ModelTabProps) {
                 description='Create a View to bind elements and drive scoped Graph/Docs output.'
               />
             )}
+            </div>
           </CardContent>
         </Card>
 
@@ -2220,6 +2277,11 @@ function ViewDefinitionPanel({
                 ))}
               </SelectContent>
             </Select>
+            {!viewpoints.length && (
+              <p className='mt-2 text-xs text-muted-foreground'>
+                No Viewpoint exists yet. Click New Viewpoint in the Views card first.
+              </p>
+            )}
           </Field>
           <Field label='Document section title'>
             <Input
