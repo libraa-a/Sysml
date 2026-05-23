@@ -3,13 +3,21 @@
 from __future__ import annotations
 
 import copy
+import json
+import re
 from typing import Any
 
-from .document_engine.traceability import render_model_summary_markdown, render_traceability_markdown
+from .document_engine.traceability import (
+    render_model_summary_markdown,
+    render_traceability_markdown,
+    render_validation_markdown,
+)
 from .metamodel import TYPE_LABELS, build_diagram
 
 
 Element = dict[str, Any]
+VIEW_TEMPLATE_TOKEN_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_.]*)\s*\}\}")
+DEFAULT_VIEW_TEMPLATE_NAME = "summary-trace-validation"
 
 
 def list_view_elements(elements: dict[str, Element]) -> list[Element]:
@@ -26,40 +34,44 @@ def view_payload(elements: dict[str, Element], view_id: str) -> dict[str, Any]:
     if not view or view.get("type") != "View":
         raise KeyError(view_id)
     viewpoint = resolve_viewpoint(elements, view)
-    scoped = resolve_view_scope(elements, view)
+    scope = _resolve_view_scope_details(elements, view, viewpoint)
     return {
         "view": copy.deepcopy(view),
         "viewpoint": copy.deepcopy(viewpoint) if viewpoint else None,
-        "elements": list(scoped.values()),
-        "element_count": len(scoped),
-        "element_ids": list(scoped),
-        "summary": view_scope_summary(scoped),
+        "view_query": copy.deepcopy(scope["view_query"]),
+        "viewpoint_default_query": copy.deepcopy(scope["viewpoint_default_query"]),
+        "effective_query": copy.deepcopy(scope["effective_query"]),
+        "root_element_ids": list(scope["root_element_ids"]),
+        "manual_element_ids": list(scope["manual_element_ids"]),
+        "query_element_ids": list(scope["query_element_ids"]),
+        "automatic_element_ids": list(scope["automatic_element_ids"]),
+        "overlap_element_ids": list(scope["overlap_element_ids"]),
+        "content_element_ids": list(scope["content_element_ids"]),
+        "content_count": len(scope["content_element_ids"]),
+        "content_summary": view_scope_summary(scope["content_map"]),
+        "manual_elements": list(scope["manual_elements"]),
+        "query_elements": list(scope["query_elements"]),
+        "automatic_elements": list(scope["automatic_elements"]),
+        "content_elements": list(scope["content_elements"]),
+        "elements": list(scope["elements"]),
+        "element_count": len(scope["elements"]),
+        "element_ids": list(scope["element_ids"]),
+        "summary": view_scope_summary(scope["element_map"]),
+        "scope_breakdown": {
+            "manual": len(scope["manual_element_ids"]),
+            "query": len(scope["query_element_ids"]),
+            "automatic": len(scope["automatic_element_ids"]),
+            "overlap": len(scope["overlap_element_ids"]),
+            "content": len(scope["content_element_ids"]),
+        },
     }
 
 
 def resolve_view_scope(elements: dict[str, Element], view: Element) -> dict[str, Element]:
     """Resolve elements selected by a View's manual bindings and query rules."""
-    selected_ids: list[str] = [str(view.get("id", ""))]
     viewpoint = resolve_viewpoint(elements, view)
-    if viewpoint:
-        selected_ids.append(str(viewpoint.get("id", "")))
-    selected_ids.extend(_list_attribute(view, "included_elements"))
-    selected_ids.extend(_list_attribute(view, "elements"))
-    selected_ids.extend(_include_relation_targets(view))
-
-    query = _effective_query(view, viewpoint)
-    if isinstance(query, dict):
-        selected_ids.extend(_query_matches(elements, query))
-
-    depth = _relation_depth(query)
-    relation_filter = _as_set(query.get("relations")) if isinstance(query, dict) else set()
-    selected_ids = _expand_by_depth(elements, selected_ids, depth, relation_filter)
-
-    scoped: dict[str, Element] = {}
-    for element_id in selected_ids:
-        if element_id in elements:
-            scoped[element_id] = copy.deepcopy(elements[element_id])
-    return scoped
+    details = _resolve_view_scope_details(elements, view, viewpoint)
+    return details["element_map"]
 
 
 def build_view_diagram(elements: dict[str, Element], view_id: str) -> dict[str, Any]:
@@ -70,7 +82,7 @@ def build_view_diagram(elements: dict[str, Element], view_id: str) -> dict[str, 
         (edge.get("source"), edge.get("target"), edge.get("type"))
         for edge in diagram.get("edges", [])
     }
-    for element_id in payload["element_ids"]:
+    for element_id in payload["content_element_ids"]:
         if element_id == view_id:
             continue
         edge_key = (view_id, element_id, "include")
@@ -106,11 +118,105 @@ def build_view_diagram(elements: dict[str, Element], view_id: str) -> dict[str, 
 def render_view_markdown(elements: dict[str, Element], view_id: str) -> str:
     """Render a View as a standalone Markdown section."""
     payload = view_payload(elements, view_id)
+    viewpoint = payload.get("viewpoint")
+    view = payload["view"]
+    content = {element["id"]: element for element in payload["content_elements"]}
+
+    template = (viewpoint or {}).get("attributes", {}).get("document_template")
+    if isinstance(template, str) and template.strip() and template.strip() != DEFAULT_VIEW_TEMPLATE_NAME:
+        return render_view_template(template, payload, content)
+
+    return _render_default_view_markdown(payload, content)
+
+
+def render_view_template(template: str, payload: dict[str, Any], scoped: dict[str, Element]) -> str:
+    """Render a Viewpoint-owned markdown template for a resolved View payload."""
+
+    def replace(match: re.Match[str]) -> str:
+        token = match.group(1).strip()
+        value = _resolve_view_template_token(token, payload, scoped)
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False, indent=2)
+        return str(value or "")
+
+    return VIEW_TEMPLATE_TOKEN_RE.sub(replace, template)
+
+
+def validate_view_against_viewpoint(elements: dict[str, Element], view: Element) -> list[dict[str, Any]]:
+    """Validate that a View's resolved scope conforms to its linked Viewpoint rules."""
+    view_id = str(view.get("id", ""))
+    declared_viewpoint_id = _declared_viewpoint_id(view)
+    viewpoint = resolve_viewpoint(elements, view)
+    if declared_viewpoint_id and not viewpoint:
+        return [
+            _issue(
+                "warning",
+                view_id,
+                f"View references missing Viewpoint {declared_viewpoint_id}",
+            )
+        ]
+    if not viewpoint:
+        return []
+
+    issues: list[dict[str, Any]] = []
+    viewpoint_id = str(viewpoint.get("id", ""))
+    attrs = viewpoint.get("attributes", {})
+    allowed_types = _as_set(attrs.get("allowed_types"))
+    required_types = _as_set(attrs.get("required_types"))
+    allowed_relations = _as_set(attrs.get("allowed_relations"))
+
+    scoped = resolve_view_scope(elements, view)
+    content = {
+        element_id: element
+        for element_id, element in scoped.items()
+        if element.get("type") not in {"View", "Viewpoint"}
+    }
+
+    if allowed_types:
+        for element in content.values():
+            element_type = str(element.get("type", ""))
+            if element_type not in allowed_types:
+                issues.append(
+                    _issue(
+                        "warning",
+                        view_id,
+                        f"Viewpoint {viewpoint_id} does not allow {element_type} element {element.get('id', '')}",
+                    )
+                )
+
+    for required_type in sorted(required_types):
+        if not any(element.get("type") == required_type for element in content.values()):
+            issues.append(
+                _issue(
+                    "warning",
+                    view_id,
+                    f"Viewpoint {viewpoint_id} requires at least one {required_type} element in the View scope",
+                )
+            )
+
+    if allowed_relations:
+        content_ids = set(content)
+        for source in content.values():
+            for relation in source.get("relations", []):
+                target_id = str(relation.get("target", ""))
+                relation_type = str(relation.get("type", ""))
+                if target_id in content_ids and relation_type not in allowed_relations:
+                    issues.append(
+                        _issue(
+                            "warning",
+                            view_id,
+                            f"Viewpoint {viewpoint_id} does not allow relation {relation_type} from {source.get('id', '')} to {target_id}",
+                        )
+                    )
+    return issues
+
+
+def _render_default_view_markdown(payload: dict[str, Any], scoped: dict[str, Element]) -> str:
     view = payload["view"]
     viewpoint_element = payload.get("viewpoint")
-    scoped = {element["id"]: element for element in payload["elements"]}
     attrs = view.get("attributes", {})
-    title = attrs.get("doc_section_title") or view.get("name") or view.get("id", view_id)
+    view_id = str(view.get("id", "view"))
+    title = attrs.get("doc_section_title") or view.get("name") or view_id
     viewpoint = (
         (viewpoint_element or {}).get("name")
         or attrs.get("viewpoint")
@@ -129,17 +235,161 @@ def render_view_markdown(elements: dict[str, Element], view_id: str) -> str:
         "",
         "### View Scope",
         "",
-        "| Type | ID | Name |",
-        "| --- | --- | --- |",
+        _render_scope_table(scoped),
     ]
-    for element in sorted(scoped.values(), key=lambda item: (item.get("type", ""), item.get("id", ""))):
+    rows.extend(["", "### View Summary", "", render_model_summary_markdown(scoped), "", "### View Traceability", ""])
+    rows.append(render_traceability_markdown(scoped))
+    rows.extend(["", "### View Validation", "", render_validation_markdown(scoped)])
+    return "\n".join(line for line in rows if line is not None)
+
+
+def _render_scope_table(scoped: dict[str, Element]) -> str:
+    rows = ["| Type | ID | Name |", "| --- | --- | --- |"]
+    for element in scoped.values():
         rows.append(
             f"| {TYPE_LABELS.get(element.get('type', ''), element.get('type', ''))} "
             f"| {element.get('id', '')} | {element.get('name', '')} |"
         )
-    rows.extend(["", "### View Summary", "", render_model_summary_markdown(scoped), "", "### View Traceability", ""])
-    rows.append(render_traceability_markdown(scoped))
-    return "\n".join(line for line in rows if line is not None)
+    return "\n".join(rows)
+
+
+def _resolve_view_template_token(token: str, payload: dict[str, Any], scoped: dict[str, Element]) -> Any:
+    view = payload.get("view", {})
+    viewpoint = payload.get("viewpoint") or {}
+    token_map = {
+        "view.id": view.get("id", ""),
+        "view.name": view.get("name", ""),
+        "view.description": view.get("description", ""),
+        "view.owner": view.get("owner", ""),
+        "viewpoint.id": viewpoint.get("id", ""),
+        "viewpoint.name": viewpoint.get("name", ""),
+        "viewpoint.description": viewpoint.get("description", ""),
+        "viewpoint.purpose": viewpoint.get("attributes", {}).get("purpose", ""),
+        "view.scope": _render_scope_table(scoped),
+        "view.manual_scope": _render_scope_table(_element_map(payload.get("content_elements", []), payload.get("manual_element_ids", []))),
+        "view.automatic_scope": _render_scope_table(_element_map(payload.get("content_elements", []), payload.get("automatic_element_ids", []))),
+        "view.content_scope": _render_scope_table(_element_map(payload.get("content_elements", []), payload.get("content_element_ids", []))),
+        "view.summary": render_model_summary_markdown(scoped),
+        "view.traceability": render_traceability_markdown(scoped),
+        "view.validation": render_validation_markdown(scoped),
+        "view.manual_count": payload.get("scope_breakdown", {}).get("manual", 0),
+        "view.automatic_count": payload.get("scope_breakdown", {}).get("automatic", 0),
+        "view.content_count": payload.get("scope_breakdown", {}).get("content", 0),
+        "view.view_query": payload.get("view_query", {}),
+        "view.viewpoint_default_query": payload.get("viewpoint_default_query", {}),
+        "view.effective_query": payload.get("effective_query", {}),
+    }
+    if token in token_map:
+        return token_map[token]
+    if token.startswith("view.attributes."):
+        return _get_path(view.get("attributes", {}), token.removeprefix("view.attributes."))
+    if token.startswith("viewpoint.attributes."):
+        return _get_path(viewpoint.get("attributes", {}), token.removeprefix("viewpoint.attributes."))
+    return "{{" + token + "}}"
+
+
+def _declared_viewpoint_id(view: Element) -> str:
+    attrs = view.get("attributes", {})
+    viewpoint_id = str(attrs.get("viewpoint_id") or "").strip()
+    for relation in view.get("relations", []):
+        if relation.get("type") == "conform" and relation.get("target"):
+            viewpoint_id = str(relation.get("target", "")).strip()
+            break
+    return viewpoint_id
+
+
+def _get_path(value: Any, path: str) -> Any:
+    current = value
+    for part in path.split("."):
+        if isinstance(current, dict):
+            current = current.get(part)
+        else:
+            return ""
+    return current
+
+
+def _issue(severity: str, element_id: str, message: str) -> dict[str, str]:
+    return {"severity": severity, "element_id": element_id or "-", "message": message}
+
+
+def _resolve_view_scope_details(
+    elements: dict[str, Element],
+    view: Element,
+    viewpoint: Element | None,
+) -> dict[str, Any]:
+    view_id = str(view.get("id", ""))
+    viewpoint_id = str((viewpoint or {}).get("id", ""))
+    root_ids = [view_id]
+    if viewpoint_id:
+        root_ids.append(viewpoint_id)
+
+    manual_ids = _dedupe_ids(
+        [
+            *_list_attribute(view, "included_elements"),
+            *_list_attribute(view, "elements"),
+            *_include_relation_targets(view),
+        ]
+    )
+
+    query = _effective_query(view, viewpoint)
+    if not isinstance(query, dict):
+        query = {}
+    viewpoint_default_query = {}
+    if viewpoint:
+        raw_query = viewpoint.get("attributes", {}).get("default_query", {})
+        if isinstance(raw_query, dict):
+            viewpoint_default_query = raw_query
+    view_query = view.get("attributes", {}).get("query", {})
+    if not isinstance(view_query, dict):
+        view_query = {}
+    effective_query = _merge_query(viewpoint_default_query, view_query)
+
+    manual_content_ids = _filter_scope_content_ids(elements, manual_ids)
+    query_ids = _expand_by_depth(
+        elements,
+        _query_matches(elements, effective_query),
+        _relation_depth(effective_query),
+        _as_set(effective_query.get("relations")) if isinstance(effective_query, dict) else set(),
+    )
+    query_content_ids = _filter_scope_content_ids(elements, query_ids)
+    query_set = set(query_content_ids)
+    manual_set = set(manual_content_ids)
+    automatic_content_ids = _filter_scope_content_ids(
+        elements,
+        [element_id for element_id in query_content_ids if element_id not in manual_set],
+    )
+    content_ids = _dedupe_ids([*manual_content_ids, *automatic_content_ids])
+    element_ids = _dedupe_ids([*root_ids, *content_ids])
+
+    element_map: dict[str, Element] = {}
+    for element_id in element_ids:
+        if element_id in elements:
+            element_map[element_id] = copy.deepcopy(elements[element_id])
+
+    content_map: dict[str, Element] = {}
+    for element_id in content_ids:
+        if element_id in elements:
+            content_map[element_id] = copy.deepcopy(elements[element_id])
+
+    return {
+        "root_element_ids": root_ids,
+        "manual_element_ids": manual_content_ids,
+        "query_element_ids": query_content_ids,
+        "automatic_element_ids": automatic_content_ids,
+        "overlap_element_ids": [element_id for element_id in manual_content_ids if element_id in query_set],
+        "content_element_ids": content_ids,
+        "manual_elements": [element_map[element_id] for element_id in manual_content_ids if element_id in element_map],
+        "query_elements": [content_map[element_id] for element_id in query_content_ids if element_id in content_map],
+        "automatic_elements": [content_map[element_id] for element_id in automatic_content_ids if element_id in content_map],
+        "content_elements": [content_map[element_id] for element_id in content_ids if element_id in content_map],
+        "content_map": content_map,
+        "element_ids": element_ids,
+        "elements": [element_map[element_id] for element_id in element_ids if element_id in element_map],
+        "element_map": element_map,
+        "view_query": view_query,
+        "viewpoint_default_query": viewpoint_default_query,
+        "effective_query": effective_query,
+    }
 
 
 def view_scope_summary(elements: dict[str, Element]) -> dict[str, int]:
@@ -286,3 +536,32 @@ def _as_set(value: Any) -> set[str]:
     if isinstance(value, list):
         return {str(item).strip() for item in value if str(item).strip()}
     return set()
+
+
+def _dedupe_ids(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        item = str(value).strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return result
+
+
+def _filter_scope_content_ids(elements: dict[str, Element], element_ids: list[str]) -> list[str]:
+    content: list[str] = []
+    for element_id in _dedupe_ids(element_ids):
+        element = elements.get(element_id)
+        if not element:
+            continue
+        if element.get("type") in {"View", "Viewpoint"}:
+            continue
+        content.append(element_id)
+    return content
+
+
+def _element_map(elements: list[Element], element_ids: list[str]) -> dict[str, Element]:
+    lookup = {element.get("id", ""): element for element in elements if element.get("id")}
+    return {element_id: lookup[element_id] for element_id in element_ids if element_id in lookup}

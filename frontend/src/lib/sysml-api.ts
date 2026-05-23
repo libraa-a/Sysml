@@ -14,12 +14,21 @@ export type Project = {
   description?: string
   organization?: string
   updated_at?: string
+  created_at?: string
+  branches?: number
+  elements?: number
+  documents?: number
+  views?: number
+  commits?: number
+  tags?: number
 }
 
 export type Branch = {
   name: string
   head?: string
   created_at?: string
+  elements?: number
+  documents?: number
 }
 
 export type Tag = {
@@ -116,10 +125,32 @@ export type DiagramPayload = {
 export type ViewPayload = {
   view: SysmlElement
   viewpoint?: SysmlElement | null
+  view_query?: Record<string, unknown>
+  viewpoint_default_query?: Record<string, unknown>
+  effective_query?: Record<string, unknown>
+  root_element_ids: string[]
+  manual_element_ids: string[]
+  query_element_ids: string[]
+  automatic_element_ids: string[]
+  overlap_element_ids: string[]
+  content_element_ids: string[]
+  manual_elements: SysmlElement[]
+  query_elements: SysmlElement[]
+  automatic_elements: SysmlElement[]
+  content_elements: SysmlElement[]
   elements: SysmlElement[]
   element_count: number
   element_ids: string[]
+  content_count?: number
+  content_summary?: Record<string, number>
   summary: Record<string, number>
+  scope_breakdown?: {
+    manual: number
+    query: number
+    automatic: number
+    overlap: number
+    content: number
+  }
 }
 
 export type TraceRef = {
@@ -384,6 +415,7 @@ export function defaultElement(
     Object.assign(attributes, {
       purpose: '',
       allowed_types: ['Requirement', 'Block', 'TestCase'],
+      required_types: ['Requirement'],
       allowed_relations: ['satisfy', 'verify'],
       default_query: {
         types: ['Requirement', 'Block', 'TestCase'],

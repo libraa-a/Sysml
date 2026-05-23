@@ -188,6 +188,11 @@ def validate_repository(elements: dict[str, Element]) -> dict[str, Any]:
     issues: list[dict[str, Any]] = []
     for element in elements.values():
         issues.extend(validate_element(element, elements))
+    from .views import validate_view_against_viewpoint
+
+    for element in elements.values():
+        if element.get("type") == "View":
+            issues.extend(validate_view_against_viewpoint(elements, element))
 
     summary = {
         "errors": sum(1 for issue in issues if issue["severity"] == "error"),
@@ -247,11 +252,28 @@ def validate_element(element: Element, elements: dict[str, Element]) -> list[dic
         if interface_id and interface_id in elements and elements[interface_id].get("type") != "Interface":
             issues.append(issue("warning", element_id, f"端口 interface 指向 {interface_id}，但目标不是 Interface"))
 
+    if element_type == "Viewpoint":
+        for attribute_name in ("allowed_types", "required_types"):
+            for type_name in attribute_list(attributes.get(attribute_name)):
+                if type_name not in METAMODEL:
+                    issues.append(issue("warning", element_id, f"Viewpoint {attribute_name} contains unknown type {type_name}"))
+        for relation_name in attribute_list(attributes.get("allowed_relations")):
+            if relation_name not in RELATION_LABELS:
+                issues.append(issue("warning", element_id, f"Viewpoint allowed_relations contains unknown relation {relation_name}"))
+
     return issues
 
 
 def issue(severity: str, element_id: str, message: str) -> dict[str, str]:
     return {"severity": severity, "element_id": element_id or "-", "message": message}
+
+
+def attribute_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return []
 
 
 def build_diagram(elements: dict[str, Element], diagram_type: str = "requirements") -> dict[str, Any]:
