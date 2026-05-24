@@ -30,7 +30,13 @@ def _normalize_role(role: str | None) -> str:
     return (role or "author").strip().lower()
 
 
-def login(store: Any, username: str, password: str) -> dict[str, Any] | None:
+def login(store: Any | None = None, username: str | None = None, password: str | None = None) -> dict[str, Any] | None:
+    if password is None and isinstance(store, str) and isinstance(username, str):
+        password = username
+        username = store
+        store = None
+    if username is None or password is None:
+        raise ValueError("Username and password are required")
     user = get_user(store, username)
     if not user or not hmac.compare_digest(user["password_hash"], _hash(password)):
         return None
