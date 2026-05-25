@@ -356,6 +356,14 @@ export async function login(username: string, password: string) {
   })
 }
 
+export async function register(username: string, password: string) {
+  return api<{ identity: Identity }>('/api/auth/register', {
+    method: 'POST',
+    body: JSON.stringify({ username, password, role: 'author' }),
+    identity: null,
+  })
+}
+
 export function defaultElement(
   type: string,
   metamodel: Metamodel | null

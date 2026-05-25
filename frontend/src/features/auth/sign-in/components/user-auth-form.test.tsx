@@ -4,7 +4,7 @@ import { type Locator, userEvent } from 'vitest/browser'
 import { UserAuthForm } from './user-auth-form'
 
 const FORM_MESSAGES = {
-  emailEmpty: 'Please enter your email.',
+  usernameEmpty: 'Please enter your username.',
   passwordEmpty: 'Please enter your password.',
   passwordShort: 'Password must be at least 7 characters long.',
 } as const
@@ -60,7 +60,7 @@ describe('UserAuthForm', () => {
     beforeEach(async () => {
       vi.clearAllMocks()
       screen = await render(<UserAuthForm />)
-      emailInput = screen.getByRole('textbox', { name: /^Email$/i })
+      emailInput = screen.getByRole('textbox', { name: /^Username$/i })
       passwordInput = screen.getByLabelText(/^Password$/i)
       signInButton = screen.getByRole('button', { name: /^Sign in$/i })
       forgotPasswordLink = screen.getByText(/^Forgot password\?$/i)
@@ -77,7 +77,7 @@ describe('UserAuthForm', () => {
       await userEvent.click(signInButton)
 
       await expect
-        .element(screen.getByText(FORM_MESSAGES.emailEmpty))
+        .element(screen.getByText(FORM_MESSAGES.usernameEmpty))
         .toBeInTheDocument()
       await expect
         .element(screen.getByText(FORM_MESSAGES.passwordEmpty))
@@ -85,7 +85,7 @@ describe('UserAuthForm', () => {
     })
 
     it('authenticates and navigates to default route on success', async () => {
-      await userEvent.fill(emailInput, 'a@b.com')
+      await userEvent.fill(emailInput, 'testuser')
       await userEvent.fill(passwordInput, '1234567')
 
       await userEvent.click(signInButton)
@@ -93,7 +93,7 @@ describe('UserAuthForm', () => {
       await vi.waitFor(() => expect(setUserMock).toHaveBeenCalledOnce())
       expect(setUserMock).toHaveBeenCalledWith(
         expect.objectContaining({
-          email: 'a@b.com',
+          email: 'testuser',
           accountNo: expect.any(String),
           role: expect.any(Array),
           exp: expect.any(Number),
@@ -115,7 +115,7 @@ describe('UserAuthForm', () => {
       <UserAuthForm redirectTo='/settings' />
     )
 
-    await userEvent.fill(getByRole('textbox', { name: /Email/i }), 'a@b.com')
+    await userEvent.fill(getByRole('textbox', { name: /Username/i }), 'testuser')
     await userEvent.fill(getByLabelText('Password'), '1234567')
 
     await userEvent.click(getByRole('button', { name: /Sign in/i }))

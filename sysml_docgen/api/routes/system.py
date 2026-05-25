@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 
 from ..deps import get_store, read_identity
+from ...store import ConflictError
 from ...services.system_service import SystemService
 
 
@@ -45,4 +46,24 @@ async def auth_login(payload: dict[str, Any], service: SystemService = Depends(g
     identity = service.login(payload.get("username", ""), payload.get("password", ""))
     if not identity:
         raise HTTPException(status_code=401, detail="Invalid username or password")
+    return {"identity": identity}
+
+
+@router.post("/api/auth/register", tags=["MMS"])
+async def auth_register(payload: dict[str, Any], service: SystemService = Depends(get_system_service)) -> dict[str, Any]:
+    try:
+        identity = service.register(
+            payload.get("username", ""),
+            payload.get("password", ""),
+            payload.get("role", "author"),
+            payload.get("display"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except ConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    if not identity:
+        raise HTTPException(status_code=400, detail="Registration failed")
     return {"identity": identity}

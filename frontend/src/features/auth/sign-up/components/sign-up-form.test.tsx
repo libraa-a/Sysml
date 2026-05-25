@@ -4,7 +4,7 @@ import { type Locator, userEvent } from 'vitest/browser'
 import { SignUpForm } from './sign-up-form'
 
 const FORM_MESSAGES = {
-  emailEmpty: 'Please enter your email.',
+  usernameEmpty: 'Please enter your username.',
   passwordEmpty: 'Please enter your password.',
   confirmPasswordEmpty: 'Please confirm your password.',
   passwordMismatch: "Passwords don't match.",
@@ -29,7 +29,7 @@ describe('SignUpForm', () => {
     vi.clearAllMocks()
 
     screen = await render(<SignUpForm />)
-    emailInput = screen.getByRole('textbox', { name: /^Email$/i })
+    emailInput = screen.getByRole('textbox', { name: /^Username$/i })
     passwordInput = screen.getByLabelText(/^Password$/i)
     confirmPasswordInput = screen.getByLabelText(/^Confirm Password$/i)
     submitButton = screen.getByRole('button', { name: /^Create Account$/i })
@@ -50,7 +50,7 @@ describe('SignUpForm', () => {
     await userEvent.click(submitButton)
 
     await expect
-      .element(screen.getByText(FORM_MESSAGES.emailEmpty))
+      .element(screen.getByText(FORM_MESSAGES.usernameEmpty))
       .toBeInTheDocument()
     await expect
       .element(screen.getByText(FORM_MESSAGES.passwordEmpty))
@@ -61,7 +61,7 @@ describe('SignUpForm', () => {
   })
 
   it('shows a mismatch error when passwords do not match', async () => {
-    await userEvent.fill(emailInput, 'a@b.com')
+    await userEvent.fill(emailInput, 'testuser')
     await userEvent.fill(passwordInput, '1234567')
     await userEvent.fill(confirmPasswordInput, '7654321')
 
@@ -74,7 +74,7 @@ describe('SignUpForm', () => {
   it('disables submit while submitting and re-enables after timeout', async () => {
     vi.useFakeTimers()
 
-    await userEvent.fill(emailInput, 'a@b.com')
+    await userEvent.fill(emailInput, 'testuser')
     await userEvent.fill(passwordInput, '1234567')
     await userEvent.fill(confirmPasswordInput, '1234567')
 

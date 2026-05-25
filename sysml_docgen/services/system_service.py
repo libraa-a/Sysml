@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ..auth import login
+from ..auth import login, register
 from ..config import FONT_PRESETS, FRONTEND_DIST_DIR, MAX_MODEL_BYTES, OUTPUT_DIR, PANDOC_PATH, PDF_ENGINE, QUARTO_PATH, THEME_PRESETS
 from ..docgen import pandoc_available, quarto_available
 from ..ops import metrics_payload
@@ -67,4 +67,13 @@ class SystemService:
         return metrics_payload()
 
     def login(self, username: str, password: str) -> dict[str, Any] | None:
-        return login(username, password)
+        return login(self.store, username, password)
+
+    def register(
+        self,
+        username: str,
+        password: str,
+        role: str = "author",
+        display: str | None = None,
+    ) -> dict[str, Any] | None:
+        return register(self.store, username, password, role=role, display=display)

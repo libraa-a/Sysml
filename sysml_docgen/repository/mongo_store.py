@@ -7,7 +7,7 @@ import json
 from typing import Any
 
 from ..docgen import utc_now
-from .sqlite_store import ModelStore, SQLITE_PATH
+from .sqlite_store import ConflictError, ModelStore, SQLITE_PATH
 
 
 class MongoModelStore(ModelStore):
@@ -25,11 +25,13 @@ class MongoModelStore(ModelStore):
         self.state_collection = self.db[collection]
         self.element_collection = self.db["element_index"]
         self.audit_collection = self.db["audit_events"]
+        self.user_collection = self.db["users"]
         self.ASCENDING = ASCENDING
         super().__init__(SQLITE_PATH)
 
     def _init_db(self) -> None:
         self.state_collection.create_index("key", unique=True)
+        self.user_collection.create_index("username", unique=True)
         self.element_collection.create_index(
             [
                 ("project_id", self.ASCENDING),
@@ -125,6 +127,44 @@ class MongoModelStore(ModelStore):
             row.pop("_id", None)
             result.append(row)
         return result
+
+    def get_user(self, username: str) -> dict[str, Any] | None:
+        row = self.user_collection.find_one({"username": username})
+        if row is None:
+            return None
+        row.pop("_id", None)
+        return row
+
+    def create_user(
+        self,
+        username: str,
+        password_hash: str,
+        role: str,
+        display: str,
+        created_at: str | None = None,
+    ) -> dict[str, Any]:
+        created_at = created_at or utc_now()
+        try:
+            self.user_collection.insert_one(
+                {
+                    "username": username,
+                    "password_hash": password_hash,
+                    "role": role,
+                    "display": display,
+                    "created_at": created_at,
+                }
+            )
+        except Exception as exc:
+            if "duplicate key" in str(exc).lower() or "e11000" in str(exc).lower():
+                raise ConflictError(f"用户名 '{username}' 已存在") from exc
+            raise
+        return {
+            "username": username,
+            "password_hash": password_hash,
+            "role": role,
+            "display": display,
+            "created_at": created_at,
+        }
 
     def list_elements(
         self,

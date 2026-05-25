@@ -106,6 +106,17 @@ class ModelStore:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_audit_project ON audit_events(project_id, created_at)"
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    username TEXT PRIMARY KEY,
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    display TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
 
     def _load(self) -> dict[str, Any]:
         with self.connection() as connection:
@@ -249,6 +260,47 @@ class ModelStore:
             item["detail"] = json.loads(item["detail"])
             result.append(item)
         return result
+
+    def get_user(self, username: str) -> dict[str, Any] | None:
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT username, password_hash, role, display, created_at FROM users WHERE username = ?",
+                (username,),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "username": row["username"],
+            "password_hash": row["password_hash"],
+            "role": row["role"],
+            "display": row["display"],
+            "created_at": row["created_at"],
+        }
+
+    def create_user(
+        self,
+        username: str,
+        password_hash: str,
+        role: str,
+        display: str,
+        created_at: str | None = None,
+    ) -> dict[str, Any]:
+        created_at = created_at or utc_now()
+        with self.connection() as connection:
+            try:
+                connection.execute(
+                    "INSERT INTO users(username, password_hash, role, display, created_at) VALUES (?, ?, ?, ?, ?)",
+                    (username, password_hash, role, display, created_at),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise ConflictError(f"用户名 '{username}' 已存在") from exc
+        return {
+            "username": username,
+            "password_hash": password_hash,
+            "role": role,
+            "display": display,
+            "created_at": created_at,
+        }
 
     def list_projects(self) -> list[dict[str, Any]]:
         return sorted(

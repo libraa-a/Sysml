@@ -1,0 +1,19 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run SysML server",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/server.py",
+      "args": ["--reload"],
+      "env": {
+        "SYSML_STORAGE": "mongodb",
+        "MONGO_URL": "mongodb://127.0.0.1:27017",
+        "MONGO_DB": "sysml_docgen",
+        "MONGO_COLLECTION": "repository",
+        "SYSML_MONGO_STRICT": "1"
+      }
+    }
+  ]
+}

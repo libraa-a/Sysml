@@ -23,8 +23,21 @@ DEMO_USERS = {
 }
 
 
-def login(username: str, password: str) -> dict[str, Any] | None:
-    user = DEMO_USERS.get(username)
+VALID_ROLES = {"admin", "author", "reader"}
+
+
+def _normalize_role(role: str | None) -> str:
+    return (role or "author").strip().lower()
+
+
+def login(store: Any | None = None, username: str | None = None, password: str | None = None) -> dict[str, Any] | None:
+    if password is None and isinstance(store, str) and isinstance(username, str):
+        password = username
+        username = store
+        store = None
+    if username is None or password is None:
+        raise ValueError("Username and password are required")
+    user = get_user(store, username)
     if not user or not hmac.compare_digest(user["password_hash"], _hash(password)):
         return None
     identity = {
@@ -35,6 +48,41 @@ def login(username: str, password: str) -> dict[str, Any] | None:
     }
     identity["token"] = issue_token(identity)
     return identity
+
+
+def register(
+    store: Any,
+    username: str,
+    password: str,
+    role: str = "author",
+    display: str | None = None,
+) -> dict[str, Any] | None:
+    normalized_role = _normalize_role(role)
+    if normalized_role not in VALID_ROLES:
+        raise ValueError("Invalid role")
+    if not username or not password:
+        raise ValueError("Username and password are required")
+    if get_user(store, username) is not None:
+        raise ValueError(f"Username '{username}' already exists")
+    password_hash = _hash(password)
+    display = (display or username).strip() or username
+    if not hasattr(store, "create_user"):
+        raise RuntimeError("User registration is not supported by the current store")
+    store.create_user(username, password_hash, normalized_role, display)
+    identity = {
+        "username": username,
+        "role": normalized_role,
+        "display": display,
+        "exp": int(time.time()) + 8 * 60 * 60,
+    }
+    identity["token"] = issue_token(identity)
+    return identity
+
+
+def get_user(store: Any, username: str) -> dict[str, Any] | None:
+    if hasattr(store, "get_user"):
+        return store.get_user(username)
+    return DEMO_USERS.get(username)
 
 
 def issue_token(identity: dict[str, Any]) -> str:
