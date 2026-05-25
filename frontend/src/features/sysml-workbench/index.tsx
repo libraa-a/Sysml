@@ -5,6 +5,7 @@
   useMemo,
   Suspense,
   useState,
+  type DragEvent,
   type ChangeEvent,
   type FormEvent,
   type ReactNode,
@@ -213,6 +214,7 @@ const typeNames: Record<string, string> = {
   State: '状态',
   TestCase: '测试',
   View: '视图',
+  Viewpoint: '视角',
 }
 
 const relationNames: Record<string, string> = {
@@ -226,6 +228,8 @@ const relationNames: Record<string, string> = {
   flow: '流转',
   transition: '迁移',
   constrain: '约束',
+  include: '包含',
+  conform: '符合视角',
 }
 
 const displayTypeNames: Record<string, string> = {
@@ -238,6 +242,7 @@ const displayTypeNames: Record<string, string> = {
   State: 'State',
   TestCase: 'Test Case',
   View: 'View',
+  Viewpoint: 'Viewpoint',
 }
 
 const displayDiagramNames: Record<string, string> = {
@@ -259,6 +264,8 @@ const displayRelationNames: Record<string, string> = {
   flow: 'Flow',
   transition: 'Transition',
   constrain: 'Constrain',
+  include: 'Include',
+  conform: 'Conform',
 }
 
 const severityLabels = {
@@ -267,7 +274,81 @@ const severityLabels = {
   info: 'Info',
 }
 
-const workbenchTabs = ['model', 'diagram', 'trace', 'version', 'docgen', 'mdk', 'assistant'] as const
+const defaultViewpointTemplate =
+  '# {{view.name}}\n\nViewpoint: {{viewpoint.name}}\n\n{{viewpoint.purpose}}\n\n## Scope\n\n{{view.scope}}\n\n## Summary\n\n{{view.summary}}\n\n## Traceability\n\n{{view.traceability}}\n\n## Validation\n\n{{view.validation}}\n'
+
+const viewpointPresets = [
+  {
+    key: 'requirements-review',
+    label: '需求审查',
+    description: '检查需求是否被设计满足、是否有测试验证。',
+    purpose: '用于需求审查，关注需求、满足关系和验证用例。',
+    allowed_types: ['Requirement', 'Block', 'TestCase'],
+    required_types: ['Requirement'],
+    allowed_relations: ['satisfy', 'verify'],
+    default_query: {
+      types: ['Requirement', 'Block', 'TestCase'],
+      owners: [],
+      text: '',
+      relation_depth: 1,
+      relations: ['satisfy', 'verify'],
+    },
+    document_template: defaultViewpointTemplate,
+  },
+  {
+    key: 'interface-review',
+    label: '接口审查',
+    description: '检查接口、端口和连接关系是否清楚。',
+    purpose: '用于接口审查，关注接口、端口、模块连接和协议说明。',
+    allowed_types: ['Block', 'Interface', 'Port'],
+    required_types: ['Interface'],
+    allowed_relations: ['connect', 'expose', 'compose'],
+    default_query: {
+      types: ['Block', 'Interface', 'Port'],
+      owners: [],
+      text: '',
+      relation_depth: 1,
+      relations: ['connect', 'expose', 'compose'],
+    },
+    document_template: defaultViewpointTemplate,
+  },
+  {
+    key: 'verification-review',
+    label: '测试验证',
+    description: '检查测试用例是否覆盖需求。',
+    purpose: '用于测试验证审查，关注需求、测试用例和验证关系。',
+    allowed_types: ['Requirement', 'TestCase'],
+    required_types: ['Requirement', 'TestCase'],
+    allowed_relations: ['verify'],
+    default_query: {
+      types: ['Requirement', 'TestCase'],
+      owners: [],
+      text: '',
+      relation_depth: 1,
+      relations: ['verify'],
+    },
+    document_template: defaultViewpointTemplate,
+  },
+  {
+    key: 'architecture-review',
+    label: '结构设计',
+    description: '检查模块结构、组成和约束关系。',
+    purpose: '用于结构设计审查，关注模块分解、组成关系和关键约束。',
+    allowed_types: ['Block', 'Port', 'Interface', 'Constraint'],
+    required_types: ['Block'],
+    allowed_relations: ['compose', 'connect', 'constrain', 'expose'],
+    default_query: {
+      types: ['Block', 'Port', 'Interface', 'Constraint'],
+      owners: [],
+      text: '',
+      relation_depth: 1,
+      relations: ['compose', 'connect', 'constrain', 'expose'],
+    },
+    document_template: defaultViewpointTemplate,
+  },
+]
+
+const workbenchTabs = ['overview', 'projects', 'model', 'views', 'diagram', 'trace', 'version', 'docgen', 'mdk', 'assistant'] as const
 
 type WorkbenchTab = (typeof workbenchTabs)[number]
 
@@ -312,6 +393,12 @@ export function SysmlWorkbench() {
   const [role, setRole] = useState(identity?.role || 'author')
   const [projects, setProjects] = useState<Project[]>([])
   const [projectId, setProjectId] = useState('')
+  const [newProject, setNewProject] = useState({
+    id: '',
+    name: '',
+    organization: '',
+    description: '',
+  })
   const [branches, setBranches] = useState<Branch[]>([])
   const [branch, setBranch] = useState('main')
   const [metamodel, setMetamodel] = useState<Metamodel | null>(null)
@@ -378,9 +465,21 @@ export function SysmlWorkbench() {
     elements.find((item) => item.id === selectedId) ||
     allElements.find((item) => item.id === selectedId)
   const viewElements = allElements.filter((item) => item.type === 'View')
+  const viewpointElements = allElements.filter((item) => item.type === 'Viewpoint')
   const elementCounts = useMemo(() => countBy(elements, (item) => item.type), [
     elements,
   ])
+  const projectTotals = useMemo(
+    () => ({
+      projects: projects.length,
+      branches: projects.reduce((sum, item) => sum + (item.branches || 0), 0),
+      elements: projects.reduce((sum, item) => sum + (item.elements || 0), 0),
+      views: projects.reduce((sum, item) => sum + (item.views || 0), 0),
+      documents: projects.reduce((sum, item) => sum + (item.documents || 0), 0),
+      commits: projects.reduce((sum, item) => sum + (item.commits || 0), 0),
+    }),
+    [projects]
+  )
 
   useEffect(() => {
     bootstrap()
@@ -439,12 +538,36 @@ export function SysmlWorkbench() {
       ])
       setMetamodel(metamodelPayload)
       setProjects(projectsPayload.projects)
-      setProjectId(projectsPayload.projects[0]?.id || '')
+      selectProject(projectsPayload.projects[0]?.id || '')
     } catch (error) {
       notifyError(error)
     } finally {
       setLoading(false)
     }
+  }
+
+  function selectProject(nextProjectId: string) {
+    setProjectId(nextProjectId)
+    setBranch('main')
+    setBranches([])
+    setElements([])
+    setAllElements([])
+    setSelectedId('')
+    setViews([])
+    setSelectedViewId('all')
+    setViewScope(null)
+    setDiagram(null)
+    setTraceability([])
+    setCommits([])
+    setTags([])
+    setAuditEvents([])
+    setDiff(null)
+    setRollbackCommit('')
+    setMergeSource('')
+    setDocuments([])
+    setCurrentDocument(null)
+    setValidation(null)
+    startNewElement(types[0] || 'Requirement')
   }
 
   async function loadProjectBranches(nextProjectId = projectId) {
@@ -464,6 +587,39 @@ export function SysmlWorkbench() {
       )
     } catch (error) {
       notifyError(error)
+    }
+  }
+
+  async function createProject() {
+    if (!newProject.name.trim()) {
+      toast.error('请先填写项目名称')
+      return
+    }
+    setBusy('create-project')
+    try {
+      const payload = await api<{ project: Project }>('/api/projects', {
+        method: 'POST',
+        identity,
+        role,
+        body: JSON.stringify({
+          id: newProject.id.trim() || undefined,
+          name: newProject.name.trim(),
+          organization: newProject.organization.trim() || undefined,
+          description: newProject.description.trim(),
+        }),
+      })
+      const projectsPayload = await api<{ projects: Project[] }>('/api/projects', {
+        identity,
+        role,
+      })
+      setProjects(projectsPayload.projects)
+      selectProject(payload.project.id)
+      setNewProject({ id: '', name: '', organization: '', description: '' })
+      toast.success(`项目已创建：${payload.project.name || payload.project.id}`)
+    } catch (error) {
+      notifyError(error)
+    } finally {
+      setBusy('')
     }
   }
 
@@ -776,6 +932,22 @@ export function SysmlWorkbench() {
     }
   }
 
+  async function saveCurrentElement() {
+    if (!projectId || !branch) return
+    setBusy('save-element')
+    try {
+      await persistElement({
+        element: form,
+        attributesText,
+        relationsText,
+      })
+    } catch (error) {
+      notifyError(error)
+    } finally {
+      setBusy('')
+    }
+  }
+
   async function updateDiagramElement(
     element: SysmlElement,
     successMessage: string,
@@ -823,6 +995,19 @@ export function SysmlWorkbench() {
     }
   }
 
+  function setViewIncludedElements(nextIds: string[]) {
+    const attributes = parseJsonSafe<Record<string, unknown>>(attributesText, {})
+    const cleaned = Array.from(
+      new Set(nextIds.map((item) => String(item).trim()).filter(Boolean))
+    )
+    const updated = { ...attributes, included_elements: cleaned }
+    setAttributesText(JSON.stringify(updated, null, 2))
+    setForm((currentForm) => ({
+      ...currentForm,
+      attributes: updated,
+    }))
+  }
+
   async function addRelation() {
     if (!form.id || !elements.length || !relationTypes.length) return
     const target = elements.find((item) => item.id !== form.id)?.id || elements[0]?.id
@@ -839,12 +1024,26 @@ export function SysmlWorkbench() {
     const next = checked
       ? Array.from(new Set([...current, elementId]))
       : current.filter((item) => item !== elementId)
-    const updated = { ...attributes, included_elements: next }
+    setViewIncludedElements(next)
+  }
+
+  function updateViewAttributes(patch: Record<string, unknown>) {
+    const attributes = parseJsonSafe<Record<string, unknown>>(attributesText, {})
+    const updated = { ...attributes, ...patch }
     setAttributesText(JSON.stringify(updated, null, 2))
     setForm((currentForm) => ({
       ...currentForm,
       attributes: updated,
     }))
+  }
+
+  function updateViewQuery(patch: Record<string, unknown>) {
+    const attributes = parseJsonSafe<Record<string, unknown>>(attributesText, {})
+    const currentQuery =
+      attributes.query && typeof attributes.query === 'object' && !Array.isArray(attributes.query)
+        ? (attributes.query as Record<string, unknown>)
+        : {}
+    updateViewAttributes({ query: { ...currentQuery, ...patch } })
   }
 
   async function commitBranch() {
@@ -1348,28 +1547,42 @@ export function SysmlWorkbench() {
                 <div className='flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between'>
                   <div className='min-w-0'>
                     <div className='sysml-eyebrow mb-2 text-xs font-semibold uppercase'>
-                      MBSE Model Management System
+                      {activeTab === 'overview'
+                        ? 'MBSE Portfolio Workspace'
+                        : 'MBSE Model Management System'}
                     </div>
                     <div className='flex flex-wrap items-center gap-2'>
                       <h1 className='truncate text-2xl font-semibold tracking-tight md:text-3xl'>
-                        {project?.name || 'SysML Project'}
+                        {activeTab === 'overview'
+                          ? 'MBSE 项目统筹中心'
+                          : project?.name || 'SysML Project'}
                       </h1>
                       <Badge variant='outline' className='rounded-sm'>
-                        branch / {branch}
+                        {activeTab === 'overview'
+                          ? `${projects.length} projects`
+                          : `branch / ${branch}`}
                       </Badge>
                       <Badge variant='secondary' className='rounded-sm'>
-                        {branches.find((item) => item.name === branch)?.head ||
-                          'working'}
+                        {activeTab === 'overview'
+                          ? `${projectTotals.elements} elements`
+                          : branches.find((item) => item.name === branch)?.head ||
+                            'working'}
                       </Badge>
                     </div>
                     <p className='mt-2 max-w-3xl text-sm text-muted-foreground'>
-                      {project?.organization || 'Current project'}
-                      <span className='mx-2 text-border'>/</span>
-                      MMS, VE, MDK and DocGen are kept in one traceable workspace.
+                      {activeTab === 'overview'
+                        ? '先看所有项目、风险和下一步动作，再进入具体模型工作区。'
+                        : project?.organization || 'Current project'}
+                      {activeTab !== 'overview' && (
+                        <>
+                          <span className='mx-2 text-border'>/</span>
+                          MMS, VE, MDK and DocGen are kept in one traceable workspace.
+                        </>
+                      )}
                     </p>
                   </div>
                   <div className='grid gap-2 md:grid-cols-[minmax(220px,1fr)_160px_auto] xl:min-w-[740px]'>
-                    <Select value={projectId} onValueChange={setProjectId}>
+                    <Select value={projectId} onValueChange={selectProject}>
                       <SelectTrigger className='w-full'>
                         <SelectValue placeholder='Select project' />
                       </SelectTrigger>
@@ -1446,9 +1659,21 @@ export function SysmlWorkbench() {
             >
               <div className='sticky top-16 z-20 overflow-x-auto rounded-lg py-2 backdrop-blur'>
                 <TabsList className='sysml-tabs h-11 p-1'>
-                  <TabsTrigger value='model'>
+                  <TabsTrigger value='overview'>
                     <LayoutDashboard className='size-4' />
+                    Overview
+                  </TabsTrigger>
+                  <TabsTrigger value='projects'>
+                    <Boxes className='size-4' />
+                    Projects
+                  </TabsTrigger>
+                  <TabsTrigger value='model'>
+                    <Boxes className='size-4' />
                     Model
+                  </TabsTrigger>
+                  <TabsTrigger value='views'>
+                    <Archive className='size-4' />
+                    Views
                   </TabsTrigger>
                   <TabsTrigger value='diagram'>
                     <Network className='size-4' />
@@ -1477,10 +1702,40 @@ export function SysmlWorkbench() {
                 </TabsList>
               </div>
 
+              <TabsContent value='overview'>
+                <OverviewTab
+                  projects={projects}
+                  currentProject={project}
+                  currentBranch={branch}
+                  totals={projectTotals}
+                  validation={validation}
+                  onSelectProject={selectProject}
+                  onOpenProject={() => selectTab('model')}
+                  onManageProjects={() => selectTab('projects')}
+                  onGoToMdk={() => selectTab('mdk')}
+                  onGoToViews={() => selectTab('views')}
+                  onGoToDocs={() => selectTab('docgen')}
+                />
+              </TabsContent>
+
+              <TabsContent value='projects'>
+                <ProjectsTab
+                  projects={projects}
+                  currentProjectId={projectId}
+                  branches={branches}
+                  currentBranch={branch}
+                  newProject={newProject}
+                  setNewProject={setNewProject}
+                  onSelectProject={selectProject}
+                  onCreateProject={createProject}
+                  onOpenWorkbench={() => selectTab('model')}
+                  busy={busy}
+                />
+              </TabsContent>
+
               <TabsContent value='model'>
                 <ModelTab
                   elements={elements}
-                  bindableElements={allElements}
                   selectedId={selectedId}
                   setSelectedId={setSelectedId}
                   typeFilter={typeFilter}
@@ -1495,17 +1750,37 @@ export function SysmlWorkbench() {
                   setAttributesText={setAttributesText}
                   relationsText={relationsText}
                   setRelationsText={setRelationsText}
-                  views={views.length ? views : viewElements}
                   validation={validation}
                   aiReview={aiModelReview}
                   onNew={() => startNewElement(types[0] || 'Requirement')}
-                  onNewView={() => startNewElement('View')}
                   onDelete={deleteElement}
                   onSave={saveElement}
                   onAddRelation={addRelation}
-                  onToggleViewElement={toggleViewElement}
                   onAiReview={runAiModelReview}
                   busy={busy}
+                />
+              </TabsContent>
+
+              <TabsContent value='views'>
+              <ViewsTab
+                  views={views.length ? views : viewElements}
+                  viewpoints={viewpointElements}
+                  selectedId={selectedId}
+                  setSelectedId={setSelectedId}
+                  bindableElements={allElements}
+                  form={form}
+                  attributesText={attributesText}
+                  onNewView={() => startNewElement('View')}
+                  onNewViewpoint={() => startNewElement('Viewpoint')}
+                  onToggleViewElement={toggleViewElement}
+                  onSetIncludedElements={setViewIncludedElements}
+                  onUpdateViewAttributes={updateViewAttributes}
+                  onUpdateViewQuery={updateViewQuery}
+                  onSaveCurrent={saveCurrentElement}
+                  validation={validation}
+                  aiReview={aiModelReview}
+                  busy={busy}
+                  onAiReview={runAiModelReview}
                 />
               </TabsContent>
 
@@ -1630,7 +1905,6 @@ export function SysmlWorkbench() {
 
 type ModelTabProps = {
   elements: SysmlElement[]
-  bindableElements: SysmlElement[]
   selectedId: string
   setSelectedId: (id: string) => void
   typeFilter: string
@@ -1648,15 +1922,12 @@ type ModelTabProps = {
   setAttributesText: (value: string) => void
   relationsText: string
   setRelationsText: (value: string) => void
-  views: SysmlElement[]
   validation: ValidationPayload | null
   aiReview: AiModelReview | null
   onNew: () => void
-  onNewView: () => void
   onDelete: () => void
   onSave: (event: FormEvent) => void
   onAddRelation: () => void
-  onToggleViewElement: (elementId: string, checked: boolean) => void
   onAiReview: () => void
   busy: string
 }
@@ -1870,71 +2141,14 @@ function ModelTab(props: ModelTabProps) {
       </Card>
 
       <div className='space-y-4'>
-        <Card className='sysml-card'>
-          <CardHeader>
-            <div className='flex items-center justify-between gap-3'>
-              <div>
-                <CardTitle>Views</CardTitle>
-                <CardDescription>
-                  First-class model views for scoped Graph and Docs output.
-                </CardDescription>
-              </div>
-              <Button size='sm' variant='outline' onClick={props.onNewView}>
-                <Plus className='size-4' />
-                New View
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent>
-            {props.views.length ? (
-              <div className='grid gap-2 md:grid-cols-2'>
-                {props.views.map((view) => {
-                  const attributes = view.attributes || {}
-                  const included = Array.isArray(attributes.included_elements)
-                    ? attributes.included_elements.length
-                    : 0
-                  return (
-                    <button
-                      key={view.id}
-                      type='button'
-                      onClick={() => props.setSelectedId(view.id)}
-                      className={cn(
-                        'rounded-md border p-3 text-left transition-colors hover:bg-muted/60',
-                        props.selectedId === view.id && 'border-primary bg-muted'
-                      )}
-                    >
-                      <div className='flex items-center justify-between gap-2'>
-                        <span className='font-mono text-sm font-semibold'>
-                          {view.id}
-                        </span>
-                        <Badge variant='secondary'>{included} linked</Badge>
-                      </div>
-                      <div className='mt-1 text-sm font-medium'>
-                        {view.name || view.id}
-                      </div>
-                      <p className='mt-1 line-clamp-2 text-xs text-muted-foreground'>
-                        {String(attributes.viewpoint || 'General viewpoint')} /{' '}
-                        {view.description || 'No description'}
-                      </p>
-                    </button>
-                  )
-                })}
-              </div>
-            ) : (
-              <EmptyState
-                title='No Views yet'
-                description='Create a View to bind elements and drive scoped Graph/Docs output.'
-              />
-            )}
-          </CardContent>
-        </Card>
-
         <Card>
           <CardHeader>
             <div className='flex items-start justify-between gap-3'>
               <div>
                 <CardTitle>元素编辑器</CardTitle>
-                <CardDescription>属性与关系字段使用 JSON 格式</CardDescription>
+                <CardDescription>
+                  编辑普通模型元素；View / Viewpoint 请到 Views 页维护
+                </CardDescription>
               </div>
               <Button
                 variant='destructive'
@@ -1953,9 +2167,7 @@ function ModelTab(props: ModelTabProps) {
                 <Field label='ID'>
                   <Input
                     value={props.form.id}
-                    onChange={(event) =>
-                      props.updateForm('id', event.target.value)
-                    }
+                    onChange={(event) => props.updateForm('id', event.target.value)}
                     placeholder='留空可由后端生成'
                   />
                 </Field>
@@ -1980,17 +2192,13 @@ function ModelTab(props: ModelTabProps) {
                   <Input
                     required
                     value={props.form.name}
-                    onChange={(event) =>
-                      props.updateForm('name', event.target.value)
-                    }
+                    onChange={(event) => props.updateForm('name', event.target.value)}
                   />
                 </Field>
                 <Field label='负责人'>
                   <Input
                     value={props.form.owner || ''}
-                    onChange={(event) =>
-                      props.updateForm('owner', event.target.value)
-                    }
+                    onChange={(event) => props.updateForm('owner', event.target.value)}
                   />
                 </Field>
                 <Field label='构造型'>
@@ -2002,6 +2210,7 @@ function ModelTab(props: ModelTabProps) {
                   />
                 </Field>
               </div>
+
               <Field label='描述'>
                 <Textarea
                   rows={3}
@@ -2011,14 +2220,7 @@ function ModelTab(props: ModelTabProps) {
                   }
                 />
               </Field>
-              {props.form.type === 'View' && (
-                <ViewBindingPanel
-                  elements={props.bindableElements}
-                  viewId={props.form.id}
-                  attributesText={props.attributesText}
-                  onToggle={props.onToggleViewElement}
-                />
-              )}
+
               <div className='grid gap-4 lg:grid-cols-2'>
                 <Field label='属性 JSON'>
                   <Textarea
@@ -2035,15 +2237,13 @@ function ModelTab(props: ModelTabProps) {
                   />
                 </Field>
               </div>
+
               <div className='flex flex-wrap justify-end gap-2'>
                 <Button type='button' variant='outline' onClick={props.onAddRelation}>
                   <Plus className='size-4' />
                   添加关系
                 </Button>
-                <Button
-                  type='submit'
-                  disabled={props.busy === 'save-element'}
-                >
+                <Button type='submit' disabled={props.busy === 'save-element'}>
                   {props.busy === 'save-element' ? (
                     <Loader2 className='size-4 animate-spin' />
                   ) : (
@@ -2114,89 +2314,1634 @@ function ValidationPanel({ validation }: { validation: ValidationPayload | null 
   )
 }
 
-function ViewBindingPanel({
+function OverviewTab({
+  projects,
+  currentProject,
+  currentBranch,
+  totals,
+  validation,
+  onSelectProject,
+  onOpenProject,
+  onManageProjects,
+  onGoToMdk,
+  onGoToViews,
+  onGoToDocs,
+}: {
+  projects: Project[]
+  currentProject?: Project
+  currentBranch: string
+  totals: {
+    projects: number
+    branches: number
+    elements: number
+    views: number
+    documents: number
+    commits: number
+  }
+  validation: ValidationPayload | null
+  onSelectProject: (projectId: string) => void
+  onOpenProject: () => void
+  onManageProjects: () => void
+  onGoToMdk: () => void
+  onGoToViews: () => void
+  onGoToDocs: () => void
+}) {
+  const recentProjects = [...projects]
+    .sort((left, right) => String(right.updated_at || '').localeCompare(String(left.updated_at || '')))
+    .slice(0, 4)
+  const validationCount =
+    (validation?.summary.errors || 0) + (validation?.summary.warnings || 0)
+  const hasCurrentProject = Boolean(currentProject)
+
+  return (
+    <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]'>
+      <div className='space-y-4'>
+        <Card className='sysml-card'>
+          <CardHeader>
+            <div className='flex flex-col gap-3 md:flex-row md:items-center md:justify-between'>
+              <div>
+                <CardTitle>统筹看板</CardTitle>
+                <CardDescription>
+                  先看全局项目组合，再进入具体项目做建模、View、文档和版本管理。
+                </CardDescription>
+              </div>
+              <Button onClick={onManageProjects}>
+                <Boxes className='size-4' />
+                管理项目
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>
+              <PortfolioMetric
+                label='项目'
+                value={totals.projects}
+                detail={`${totals.branches} branches`}
+                icon={Boxes}
+              />
+              <PortfolioMetric
+                label='模型元素'
+                value={totals.elements}
+                detail='all projects'
+                icon={LayoutDashboard}
+              />
+              <PortfolioMetric
+                label='View / Viewpoint'
+                value={totals.views}
+                detail='scoped views'
+                icon={Archive}
+              />
+              <PortfolioMetric
+                label='文档'
+                value={totals.documents}
+                detail={`${totals.commits} commits`}
+                icon={FileText}
+              />
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]'>
+          <Card className='sysml-card'>
+            <CardHeader>
+              <CardTitle>最近项目</CardTitle>
+              <CardDescription>
+                选择项目后，右侧工作建议和顶部项目栏会随之切换。
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {recentProjects.length ? (
+                <div className='grid gap-3 md:grid-cols-2'>
+                  {recentProjects.map((project) => {
+                    const active = project.id === currentProject?.id
+                    return (
+                      <button
+                        key={project.id}
+                        type='button'
+                        onClick={() => onSelectProject(project.id)}
+                        className={cn(
+                          'rounded-lg border bg-background p-4 text-left transition hover:border-primary hover:bg-muted/40',
+                          active && 'border-primary bg-primary/5'
+                        )}
+                      >
+                        <div className='flex items-start justify-between gap-3'>
+                          <div className='min-w-0'>
+                            <div className='font-mono text-xs text-muted-foreground'>
+                              {project.id}
+                            </div>
+                            <div className='mt-1 truncate font-semibold'>
+                              {project.name || project.id}
+                            </div>
+                            <p className='mt-1 line-clamp-2 text-xs text-muted-foreground'>
+                              {project.description || 'No description yet'}
+                            </p>
+                          </div>
+                          <Badge variant={active ? 'default' : 'secondary'}>
+                            {active ? '当前' : '选择'}
+                          </Badge>
+                        </div>
+                        <div className='mt-3 flex flex-wrap gap-2 text-xs'>
+                          <Badge variant='outline'>{project.elements || 0} elements</Badge>
+                          <Badge variant='outline'>{project.views || 0} views</Badge>
+                          <Badge variant='outline'>{project.documents || 0} docs</Badge>
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              ) : (
+                <EmptyState
+                  title='还没有项目'
+                  description='先进入 Projects 创建一个项目，再导入或编辑模型。'
+                />
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className='sysml-card'>
+            <CardHeader>
+              <CardTitle>当前项目状态</CardTitle>
+              <CardDescription>这里不是编辑区，只告诉你下一步该干什么。</CardDescription>
+            </CardHeader>
+            <CardContent className='space-y-4'>
+              {hasCurrentProject ? (
+                <>
+                  <div className='rounded-md border bg-muted/20 p-4'>
+                    <div className='text-xs text-muted-foreground'>当前项目</div>
+                    <div className='mt-1 text-lg font-semibold'>
+                      {currentProject?.name || currentProject?.id}
+                    </div>
+                    <div className='mt-1 text-xs text-muted-foreground'>
+                      {currentProject?.organization || 'No organization'} / branch {currentBranch}
+                    </div>
+                  </div>
+                  <div className='grid gap-2'>
+                    <Button onClick={onOpenProject}>
+                      <LayoutDashboard className='size-4' />
+                      进入模型工作台
+                    </Button>
+                    <Button variant='outline' onClick={onGoToMdk}>
+                      <Upload className='size-4' />
+                      导入外部模型
+                    </Button>
+                    <Button variant='outline' onClick={onGoToViews}>
+                      <Archive className='size-4' />
+                      创建 View
+                    </Button>
+                    <Button variant='outline' onClick={onGoToDocs}>
+                      <FileText className='size-4' />
+                      生成文档
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <EmptyState
+                  title='未选择项目'
+                  description='选择一个项目，或到 Projects 新建项目。'
+                />
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+
+      <div className='space-y-4'>
+        <Card className='sysml-card'>
+          <CardHeader>
+            <CardTitle>风险和待办</CardTitle>
+            <CardDescription>当前项目的快速健康检查。</CardDescription>
+          </CardHeader>
+          <CardContent className='space-y-3'>
+            <Alert variant={validationCount ? 'destructive' : 'default'}>
+              {validationCount ? (
+                <AlertCircle className='size-4' />
+              ) : (
+                <CheckCircle2 className='size-4' />
+              )}
+              <AlertTitle>
+                {validationCount ? '当前项目需要处理校验问题' : '当前项目校验通过'}
+              </AlertTitle>
+              <AlertDescription>
+                {validationCount
+                  ? `${validation?.summary.errors || 0} 个错误，${validation?.summary.warnings || 0} 个警告。`
+                  : '未发现错误或警告。'}
+              </AlertDescription>
+            </Alert>
+            <NextStep
+              title='如果是新项目'
+              description='先到 MDK 导入模型，或在 Model 手动创建第一个需求/模块。'
+            />
+            <NextStep
+              title='如果要汇报'
+              description='先创建 View，把范围收窄，再到 Docs 按 View 生成文档。'
+            />
+            <NextStep
+              title='如果要冻结状态'
+              description='到 Versions 提交版本，再创建标签基线。'
+            />
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  )
+}
+
+function PortfolioMetric({
+  label,
+  value,
+  detail,
+  icon: Icon,
+}: {
+  label: string
+  value: number
+  detail: string
+  icon: typeof Boxes
+}) {
+  return (
+    <div className='rounded-lg border bg-background p-4'>
+      <div className='flex items-center justify-between gap-3'>
+        <div className='text-sm font-medium'>{label}</div>
+        <Icon className='size-4 text-muted-foreground' />
+      </div>
+      <div className='mt-3 text-3xl font-semibold'>{value}</div>
+      <div className='mt-1 text-xs text-muted-foreground'>{detail}</div>
+    </div>
+  )
+}
+
+function NextStep({
+  title,
+  description,
+}: {
+  title: string
+  description: string
+}) {
+  return (
+    <div className='rounded-md border bg-muted/20 p-3'>
+      <div className='text-sm font-semibold'>{title}</div>
+      <p className='mt-1 text-xs text-muted-foreground'>{description}</p>
+    </div>
+  )
+}
+
+function ProjectsTab({
+  projects,
+  currentProjectId,
+  branches,
+  currentBranch,
+  newProject,
+  setNewProject,
+  onSelectProject,
+  onCreateProject,
+  onOpenWorkbench,
+  busy,
+}: {
+  projects: Project[]
+  currentProjectId: string
+  branches: Branch[]
+  currentBranch: string
+  newProject: {
+    id: string
+    name: string
+    organization: string
+    description: string
+  }
+  setNewProject: (value: {
+    id: string
+    name: string
+    organization: string
+    description: string
+  }) => void
+  onSelectProject: (projectId: string) => void
+  onCreateProject: () => void
+  onOpenWorkbench: () => void
+  busy: string
+}) {
+  const currentProject = projects.find((project) => project.id === currentProjectId)
+  const totalElements = projects.reduce((sum, project) => sum + (project.elements || 0), 0)
+  const totalDocuments = projects.reduce((sum, project) => sum + (project.documents || 0), 0)
+  const totalViews = projects.reduce((sum, project) => sum + (project.views || 0), 0)
+
+  function updateNewProject(
+    field: keyof typeof newProject,
+    value: string
+  ) {
+    setNewProject({ ...newProject, [field]: value })
+  }
+
+  return (
+    <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]'>
+      <div className='space-y-4'>
+        <Card className='sysml-card'>
+          <CardHeader>
+            <div className='flex flex-col gap-3 md:flex-row md:items-center md:justify-between'>
+              <div>
+                <CardTitle>项目管理</CardTitle>
+                <CardDescription>
+                  这里负责创建、选择和打开项目；真正的统筹信息在 Overview。
+                </CardDescription>
+              </div>
+              <div className='flex flex-wrap gap-2'>
+                <Badge variant='secondary'>{projects.length} projects</Badge>
+                <Badge variant='outline'>{totalElements} elements</Badge>
+                <Badge variant='outline'>{totalViews} views</Badge>
+                <Badge variant='outline'>{totalDocuments} docs</Badge>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {projects.length ? (
+              <div className='grid gap-3 lg:grid-cols-2'>
+                {projects.map((project) => {
+                  const active = project.id === currentProjectId
+                  return (
+                    <button
+                      key={project.id}
+                      type='button'
+                      onClick={() => onSelectProject(project.id)}
+                      className={cn(
+                        'rounded-lg border bg-background p-4 text-left transition hover:border-primary hover:bg-muted/30',
+                        active && 'border-primary bg-primary/5'
+                      )}
+                    >
+                      <div className='flex items-start justify-between gap-3'>
+                        <div className='min-w-0'>
+                          <div className='font-mono text-xs text-muted-foreground'>
+                            {project.id}
+                          </div>
+                          <div className='mt-1 truncate text-lg font-semibold'>
+                            {project.name || project.id}
+                          </div>
+                          <p className='mt-1 line-clamp-2 text-sm text-muted-foreground'>
+                            {project.description || 'No description yet'}
+                          </p>
+                        </div>
+                        <Badge variant={active ? 'default' : 'secondary'}>
+                          {active ? '当前项目' : '打开'}
+                        </Badge>
+                      </div>
+                      <div className='mt-4 grid grid-cols-4 gap-2 text-center text-xs'>
+                        <ProjectStat value={project.branches || 0} label='分支' />
+                        <ProjectStat value={project.elements || 0} label='元素' />
+                        <ProjectStat value={project.views || 0} label='视图' />
+                        <ProjectStat value={project.documents || 0} label='文档' />
+                      </div>
+                      <div className='mt-3 text-xs text-muted-foreground'>
+                        {project.organization || 'No organization'} / updated{' '}
+                        {project.updated_at || '-'}
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            ) : (
+              <EmptyState
+                title='还没有项目'
+                description='先创建一个项目，再导入模型或手动创建 SysML 元素。'
+              />
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className='sysml-card'>
+          <CardHeader>
+            <div className='flex items-center justify-between gap-3'>
+              <div>
+                <CardTitle>当前项目工作区</CardTitle>
+                <CardDescription>
+                  切换项目后，模型、分支、文档和 View 都会跟着切换。
+                </CardDescription>
+              </div>
+              <Button onClick={onOpenWorkbench} disabled={!currentProjectId}>
+                打开模型工作台
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {currentProject ? (
+              <div className='space-y-4'>
+                <div className='rounded-md border bg-muted/20 p-4'>
+                  <div className='text-sm text-muted-foreground'>当前项目</div>
+                  <div className='mt-1 text-xl font-semibold'>
+                    {currentProject.name || currentProject.id}
+                  </div>
+                  <p className='mt-1 text-sm text-muted-foreground'>
+                    {currentProject.organization || 'No organization'} / branch {currentBranch}
+                  </p>
+                </div>
+                <div className='grid gap-3 md:grid-cols-2 xl:grid-cols-3'>
+                  {branches.map((item) => (
+                    <div
+                      key={item.name}
+                      className={cn(
+                        'rounded-md border bg-background p-3',
+                        item.name === currentBranch && 'border-primary bg-primary/5'
+                      )}
+                    >
+                      <div className='flex items-center justify-between gap-2'>
+                        <div className='font-medium'>{item.name}</div>
+                        {item.name === currentBranch && (
+                          <Badge variant='secondary'>current</Badge>
+                        )}
+                      </div>
+                      <div className='mt-2 text-xs text-muted-foreground'>
+                        {item.elements || 0} elements / {item.documents || 0} docs
+                      </div>
+                      <div className='mt-1 truncate font-mono text-xs text-muted-foreground'>
+                        {item.head || 'working'}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <EmptyState
+                title='未选择项目'
+                description='从项目列表中选择一个项目，或在右侧创建新项目。'
+              />
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card className='sysml-card self-start'>
+        <CardHeader>
+          <CardTitle>新建项目</CardTitle>
+          <CardDescription>
+            创建后会自动拥有独立的 main 分支、提交记录和后续文档空间。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className='space-y-4'>
+          <Field label='项目名称'>
+            <Input
+              value={newProject.name}
+              onChange={(event) => updateNewProject('name', event.target.value)}
+              placeholder='例如：火星探测器电源系统'
+            />
+          </Field>
+          <Field label='项目 ID'>
+            <Input
+              value={newProject.id}
+              onChange={(event) => updateNewProject('id', event.target.value)}
+              placeholder='留空则自动根据名称生成'
+            />
+          </Field>
+          <Field label='组织 / 团队'>
+            <Input
+              value={newProject.organization}
+              onChange={(event) =>
+                updateNewProject('organization', event.target.value)
+              }
+              placeholder='例如：总体设计组'
+            />
+          </Field>
+          <Field label='说明'>
+            <Textarea
+              rows={4}
+              value={newProject.description}
+              onChange={(event) =>
+                updateNewProject('description', event.target.value)
+              }
+              placeholder='这个项目要管理什么系统、什么阶段、谁来维护。'
+            />
+          </Field>
+          <Button
+            className='w-full'
+            onClick={onCreateProject}
+            disabled={busy === 'create-project'}
+          >
+            {busy === 'create-project' ? (
+              <Loader2 className='size-4 animate-spin' />
+            ) : (
+              <Plus className='size-4' />
+            )}
+            创建并打开项目
+          </Button>
+          <div className='rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground'>
+            新项目是空模型。后续可以在 Model 里手动建元素，或到 MDK 页上传 JSON/XMI/MATLAB/Jupyter 文件导入。
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+function ProjectStat({ value, label }: { value: number; label: string }) {
+  return (
+    <div className='rounded-md bg-muted/40 p-2'>
+      <div className='font-semibold'>{value}</div>
+      <div className='text-muted-foreground'>{label}</div>
+    </div>
+  )
+}
+
+function ViewDefinitionPanel({
   elements,
+  viewpoints,
   viewId,
   attributesText,
   onToggle,
+  onSetIncludedElements,
+  onUpdateAttributes,
+  onUpdateQuery,
 }: {
   elements: SysmlElement[]
+  viewpoints: SysmlElement[]
   viewId: string
   attributesText: string
   onToggle: (elementId: string, checked: boolean) => void
+  onSetIncludedElements: (elementIds: string[]) => void
+  onUpdateAttributes: (patch: Record<string, unknown>) => void
+  onUpdateQuery: (patch: Record<string, unknown>) => void
 }) {
-  const included = includedElementIds(attributesText)
-  const candidates = elements.filter((element) => element.id !== viewId)
-  const grouped = candidates.reduce<Record<string, SysmlElement[]>>((acc, element) => {
-    acc[element.type] = acc[element.type] || []
-    acc[element.type].push(element)
-    return acc
-  }, {})
+  const attributes = parseJsonSafe<Record<string, unknown>>(attributesText, {})
+  const query =
+    attributes.query && typeof attributes.query === 'object' && !Array.isArray(attributes.query)
+      ? (attributes.query as Record<string, unknown>)
+      : {}
+  const selectedTypes = stringList(query.types)
+  const selectedOwners = stringList(query.owners)
+  const selectedRelations = stringList(query.relations)
+  const ownerOptions = Array.from(
+    new Set(elements.map((element) => element.owner || '').filter(Boolean))
+  ).sort()
+  const elementById = useMemo(
+    () => new Map(elements.map((element) => [element.id, element])),
+    [elements]
+  )
+  const selectedViewpointId = String(attributes.viewpoint_id || '')
+  const selectedViewpoint =
+    viewpoints.find((item) => item.id === selectedViewpointId) || null
+  const selectedViewpointAttributes =
+    selectedViewpoint?.attributes &&
+    typeof selectedViewpoint.attributes === 'object' &&
+    !Array.isArray(selectedViewpoint.attributes)
+      ? (selectedViewpoint.attributes as Record<string, unknown>)
+      : {}
+  const viewpointQuery =
+    selectedViewpointAttributes.default_query &&
+    typeof selectedViewpointAttributes.default_query === 'object' &&
+    !Array.isArray(selectedViewpointAttributes.default_query)
+      ? (selectedViewpointAttributes.default_query as Record<string, unknown>)
+      : {}
+  const effectiveQuery = mergeQuery(viewpointQuery, query)
+  const queryPreview = previewQueryElements(elements, effectiveQuery)
+  const includedOrder = includedElementList(attributesText)
+  const includedSet = new Set(includedOrder)
+  const selectedElements = includedOrder
+    .map((elementId) => elementById.get(elementId))
+    .filter((element): element is SysmlElement => Boolean(element))
+  const finalPreviewElements = [
+    ...selectedElements,
+    ...queryPreview.matches.filter((element) => !includedSet.has(element.id)),
+  ]
+  const finalSet = new Set(finalPreviewElements.map((element) => element.id))
+  const overlapCount = queryPreview.matches.filter((element) =>
+    includedSet.has(element.id)
+  ).length
+  const candidates = elements.filter(
+    (element) =>
+      element.id !== viewId && element.type !== 'View' && element.type !== 'Viewpoint'
+  )
+  const availableElements = candidates.filter((element) => !includedSet.has(element.id))
+  const grouped = availableElements.reduce<Record<string, SysmlElement[]>>(
+    (acc, element) => {
+      acc[element.type] = acc[element.type] || []
+      acc[element.type].push(element)
+      return acc
+    },
+    {}
+  )
   const orderedTypes = Object.keys(grouped).sort()
+  const [showQueryEditor, setShowQueryEditor] = useState(false)
+  const [showLibrary, setShowLibrary] = useState(true)
+  const scopeIssues = useMemo(() => {
+    const issues: Array<{
+      source: SysmlElement
+      relationType: string
+      targetId: string
+      target: SysmlElement | null
+      fixable: boolean
+      message: string
+    }> = []
+    const seen = new Set<string>()
+
+    for (const source of selectedElements) {
+      for (const relation of source.relations || []) {
+        const targetId = String(relation.target || '').trim()
+        if (!targetId || finalSet.has(targetId)) continue
+        const key = `${source.id}:${relation.type}:${targetId}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        const target = elementById.get(targetId) || null
+        issues.push({
+          source,
+          relationType: relation.type,
+          targetId,
+          target,
+          fixable: Boolean(target),
+          message: target
+            ? `${source.id} 的 ${labelRelation(relation.type)} 指向 ${targetId}，但它还不在这个 View 里。`
+            : `${source.id} 的 ${labelRelation(relation.type)} 指向 ${targetId}，但这个元素在模型里没找到。`,
+        })
+      }
+    }
+
+    return issues
+  }, [elementById, includedSet, selectedElements])
+  const [draggingId, setDraggingId] = useState('')
+  const [dropTargetId, setDropTargetId] = useState('')
+
+  function getDraggedElementId(event: DragEvent<HTMLElement>) {
+    return (
+      event.dataTransfer.getData('application/x-sysml-element-id') ||
+      event.dataTransfer.getData('text/plain')
+    ).trim()
+  }
+
+  function beginDrag(elementId: string) {
+    return (event: DragEvent<HTMLElement>) => {
+      event.dataTransfer.effectAllowed = 'move'
+      event.dataTransfer.setData('application/x-sysml-element-id', elementId)
+      event.dataTransfer.setData('text/plain', elementId)
+      setDraggingId(elementId)
+    }
+  }
+
+  function finishDrag() {
+    setDraggingId('')
+    setDropTargetId('')
+  }
+
+  function placeElement(elementId: string, targetId?: string) {
+    const next = includedOrder.filter((id) => id !== elementId)
+    if (!targetId) {
+      next.push(elementId)
+    } else {
+      const targetIndex = next.indexOf(targetId)
+      if (targetIndex >= 0) next.splice(targetIndex, 0, elementId)
+      else next.push(elementId)
+    }
+    onSetIncludedElements(next)
+  }
+
+  function handleCanvasDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault()
+    const draggedId = getDraggedElementId(event)
+    if (draggedId) {
+      placeElement(draggedId)
+    }
+    finishDrag()
+  }
+
+  function handleCanvasDragOver(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault()
+    setDropTargetId('canvas')
+  }
+
+  function handleDropBefore(targetId: string) {
+    return (event: DragEvent<HTMLDivElement>) => {
+      event.preventDefault()
+      const draggedId = getDraggedElementId(event)
+      if (!draggedId || draggedId === targetId) return
+      setDropTargetId(`before-${targetId}`)
+      placeElement(draggedId, targetId)
+      finishDrag()
+    }
+  }
+
+  function handleDragOverTarget(targetId: string) {
+    return (event: DragEvent<HTMLElement>) => {
+      event.preventDefault()
+      setDropTargetId(`before-${targetId}`)
+    }
+  }
+
+  function handleCanvasBeforeEndDrag(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault()
+    setDropTargetId('canvas')
+  }
 
   return (
     <Card className='border-dashed bg-muted/20'>
       <CardHeader className='pb-3'>
         <div className='flex items-center justify-between gap-3'>
           <div>
-            <CardTitle className='text-base'>Bind Elements To View</CardTitle>
+            <CardTitle className='text-base'>View Studio</CardTitle>
             <CardDescription>
-              Check elements to write them into attributes.included_elements.
+              先看结果，再调规则。大部分人只需要 Viewpoint、自动收集和手动绑定这三块。
             </CardDescription>
           </div>
-          <Badge variant='secondary'>{included.size} selected</Badge>
+          <Badge variant='secondary'>{includedOrder.length} selected</Badge>
         </div>
       </CardHeader>
-      <CardContent>
-        {candidates.length ? (
-          <ScrollArea className='h-[300px] rounded-md border bg-background'>
-            <div className='space-y-4 p-3'>
-              {orderedTypes.map((type) => (
-                <div key={type} className='space-y-2'>
-                  <div className='flex items-center gap-2 text-xs font-semibold uppercase text-muted-foreground'>
-                    <span>{labelType(type)}</span>
-                    <Badge variant='outline'>{grouped[type].length}</Badge>
-                  </div>
-                  <div className='space-y-2'>
-                    {grouped[type]
-                      .sort((left, right) => left.id.localeCompare(right.id))
-                      .map((element) => {
-                        const checked = included.has(element.id)
-                        return (
-                          <label
-                            key={element.id}
-                            className='flex cursor-pointer items-start gap-3 rounded-md border p-3 hover:bg-muted/50'
+      <CardContent className='space-y-4'>
+        <div className='grid gap-4 lg:grid-cols-2'>
+          <Field label='Viewpoint'>
+            <Select
+              value={String(attributes.viewpoint_id || 'none')}
+              onValueChange={(value) => {
+                const viewpoint = viewpoints.find((item) => item.id === value)
+                onUpdateAttributes({
+                  viewpoint_id: value === 'none' ? '' : value,
+                  viewpoint: viewpoint?.name || '',
+                })
+              }}
+            >
+              <SelectTrigger className='w-full'>
+                <SelectValue placeholder='Select a Viewpoint' />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value='none'>No Viewpoint</SelectItem>
+                {viewpoints.map((viewpoint) => (
+                  <SelectItem key={viewpoint.id} value={viewpoint.id}>
+                    {viewpoint.name || viewpoint.id}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {!viewpoints.length && (
+              <p className='mt-2 text-xs text-muted-foreground'>
+                No Viewpoint exists yet. Click New Viewpoint in the Views card first.
+              </p>
+            )}
+          </Field>
+          <Field label='Document section title'>
+            <Input
+              value={String(attributes.doc_section_title || '')}
+              onChange={(event) =>
+                onUpdateAttributes({ doc_section_title: event.target.value })
+              }
+              placeholder='例如：电源需求审查'
+            />
+          </Field>
+        </div>
+
+        <div className='grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]'>
+          <div className='space-y-4'>
+            <div className='grid gap-4 xl:grid-cols-2'>
+              <QueryPreviewCard
+                title='手动绑定'
+                note='这个 View 里被你手动挑进来的元素。'
+                elements={elements}
+                explicitElements={selectedElements}
+                accent
+                emptyLabel='还没有手动绑定元素'
+              />
+              <QueryPreviewCard
+                title='自动命中'
+                note='来自 Viewpoint 默认查询和 View 自己的 query 叠加结果。'
+                query={effectiveQuery}
+                elements={elements}
+                emptyLabel='还没有设置自动查询条件'
+              />
+            </div>
+
+            <div className='rounded-md border bg-background p-4'>
+              <div className='mb-3 flex items-center justify-between gap-3'>
+                <div>
+                  <div className='text-sm font-semibold'>结果预览</div>
+                  <p className='text-xs text-muted-foreground'>
+                    这是 Graph 和 Docs 最终会用到的范围。
+                  </p>
+                </div>
+                <Badge variant='outline'>
+                  {selectedViewpoint
+                    ? `继承 ${selectedViewpoint.name || selectedViewpoint.id}`
+                    : '无 Viewpoint'}
+                </Badge>
+              </div>
+              <div className='grid gap-3 sm:grid-cols-4'>
+                <div className='rounded-md bg-muted/30 p-3'>
+                  <div className='text-xs text-muted-foreground'>手动</div>
+                  <div className='mt-1 text-2xl font-semibold'>{selectedElements.length}</div>
+                </div>
+                <div className='rounded-md bg-muted/30 p-3'>
+                  <div className='text-xs text-muted-foreground'>自动</div>
+                  <div className='mt-1 text-2xl font-semibold'>{queryPreview.match_count}</div>
+                </div>
+                <div className='rounded-md bg-muted/30 p-3'>
+                  <div className='text-xs text-muted-foreground'>重叠</div>
+                  <div className='mt-1 text-2xl font-semibold'>{overlapCount}</div>
+                </div>
+                <div className='rounded-md bg-muted/30 p-3'>
+                  <div className='text-xs text-muted-foreground'>合计</div>
+                  <div className='mt-1 text-2xl font-semibold'>{finalPreviewElements.length}</div>
+                </div>
+              </div>
+              <div className='mt-3 flex flex-wrap gap-2'>
+                {finalPreviewElements.slice(0, 8).map((element) => (
+                  <Badge key={element.id} variant='secondary' className='font-normal'>
+                    {element.id}
+                  </Badge>
+                ))}
+                {finalPreviewElements.length > 8 && (
+                  <Badge variant='outline' className='font-normal'>
+                    +{finalPreviewElements.length - 8}
+                  </Badge>
+                )}
+              </div>
+            </div>
+
+            <div className='rounded-md border bg-background p-4'>
+              <div className='mb-3 flex items-center justify-between gap-3'>
+                <div>
+                  <div className='text-sm font-semibold'>View Validation</div>
+                  <p className='text-xs text-muted-foreground'>
+                    这里展示这个 View 还缺哪些关系端点。
+                  </p>
+                </div>
+                <Badge variant={scopeIssues.length ? 'destructive' : 'secondary'}>
+                  {scopeIssues.length ? `${scopeIssues.length} issues` : 'clean'}
+                </Badge>
+              </div>
+              {scopeIssues.length ? (
+                <div className='space-y-2'>
+                  {scopeIssues.slice(0, 6).map((issue) => (
+                    <Alert
+                      key={`${issue.source.id}-${issue.relationType}-${issue.targetId}`}
+                      variant={issue.fixable ? 'default' : 'destructive'}
+                    >
+                      <AlertCircle className='size-4' />
+                      <AlertTitle>
+                        {issue.source.id} / {labelRelation(issue.relationType)}
+                      </AlertTitle>
+                      <AlertDescription className='space-y-2'>
+                        <div>{issue.message}</div>
+                        {issue.fixable && (
+                          <Button
+                            type='button'
+                            size='sm'
+                            variant='outline'
+                            onClick={() =>
+                              onSetIncludedElements(
+                                Array.from(new Set([...includedOrder, issue.targetId]))
+                              )
+                            }
                           >
-                            <Checkbox
-                              checked={checked}
-                              onCheckedChange={(value) =>
-                                onToggle(element.id, value === true)
-                              }
-                            />
-                            <span className='min-w-0 flex-1'>
-                              <span className='block font-mono text-xs font-semibold'>
-                                {element.id}
-                              </span>
-                              <span className='block truncate text-sm'>
-                                {element.name || element.id}
-                              </span>
-                              <span className='line-clamp-1 text-xs text-muted-foreground'>
-                                {element.description || element.owner || 'No description'}
-                              </span>
-                            </span>
-                          </label>
-                        )
-                      })}
+                            一键加入 {issue.targetId}
+                          </Button>
+                        )}
+                      </AlertDescription>
+                    </Alert>
+                  ))}
+                  {scopeIssues.length > 6 && (
+                    <p className='text-xs text-muted-foreground'>
+                      还有 {scopeIssues.length - 6} 条没展开。
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className='flex items-center gap-2 text-sm text-muted-foreground'>
+                  <CheckCircle2 className='size-4 text-emerald-600' />
+                  这个 View 的关系范围已经闭合了。
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className='space-y-4'>
+            <div className='rounded-md border bg-background p-4'>
+              <div className='flex items-center justify-between gap-3'>
+                <div>
+                  <div className='text-sm font-semibold'>自动收集元素</div>
+                  <p className='text-xs text-muted-foreground'>
+                    Viewpoint 默认查询 + 当前 View 的附加条件。
+                  </p>
+                </div>
+                <Button
+                  type='button'
+                  variant='ghost'
+                  size='sm'
+                  onClick={() => setShowQueryEditor((current) => !current)}
+                >
+                  {showQueryEditor ? '收起' : '展开'}
+                </Button>
+              </div>
+              <div className='mt-3 text-sm'>
+                {stringList(viewpointQuery.types).length
+                  ? formatList(stringList(viewpointQuery.types), labelType)
+                  : 'Viewpoint 默认不限制'}
+              </div>
+              {showQueryEditor && (
+                <div className='mt-4 space-y-4 border-t pt-4'>
+                  <div className='grid gap-4 lg:grid-cols-2'>
+                    <Field label='Element types'>
+                      <MultiCheckGrid
+                        options={elementsTypes(elements)}
+                        selected={selectedTypes}
+                        onChange={(next) => onUpdateQuery({ types: next })}
+                      />
+                    </Field>
+                    <Field label='Relations to focus'>
+                      <MultiCheckGrid
+                        options={['satisfy', 'verify', 'refine', 'constrain', 'include', 'conform']}
+                        selected={selectedRelations}
+                        onChange={(next) => onUpdateQuery({ relations: next })}
+                        label={labelRelation}
+                      />
+                    </Field>
+                    <Field label='Owners'>
+                      <MultiCheckGrid
+                        options={ownerOptions}
+                        selected={selectedOwners}
+                        onChange={(next) => onUpdateQuery({ owners: next })}
+                      />
+                    </Field>
+                    <Field label='Keyword'>
+                      <Input
+                        value={String(query.text || '')}
+                        onChange={(event) => onUpdateQuery({ text: event.target.value })}
+                        placeholder='搜索 ID、名称、描述、属性'
+                      />
+                    </Field>
+                    <Field label='Relation depth'>
+                      <Select
+                        value={String(query.relation_depth ?? 0)}
+                        onValueChange={(value) =>
+                          onUpdateQuery({ relation_depth: Number(value) })
+                        }
+                      >
+                        <SelectTrigger className='w-full'>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value='0'>0 - only matched/manual elements</SelectItem>
+                          <SelectItem value='1'>1 - include directly related elements</SelectItem>
+                          <SelectItem value='2'>2 - include two relation hops</SelectItem>
+                          <SelectItem value='3'>3 - include three relation hops</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </Field>
                   </div>
                 </div>
+              )}
+            </div>
+
+            <div className='rounded-md border bg-background p-4'>
+              <div className='flex items-center justify-between gap-3'>
+                <div>
+                  <div className='text-sm font-semibold'>手动绑定区</div>
+                  <p className='text-xs text-muted-foreground'>
+                    从左边拖过来，或者直接点一下加进来。
+                  </p>
+                </div>
+                <Button
+                  type='button'
+                  variant='ghost'
+                  size='sm'
+                  onClick={() => setShowLibrary((current) => !current)}
+                >
+                  {showLibrary ? '收起元素库' : '展开元素库'}
+                </Button>
+              </div>
+              <div
+                className={cn(
+                  'mt-3 min-h-[300px] rounded-md border bg-background p-3 transition-colors',
+                  dropTargetId === 'canvas' && 'border-primary bg-primary/5'
+                )}
+                onDragOver={handleCanvasDragOver}
+                onDrop={handleCanvasDrop}
+                onDragLeave={finishDrag}
+              >
+                {selectedElements.length ? (
+                  <div className='space-y-2'>
+                    {selectedElements.map((element, index) => (
+                      <div key={element.id} className='space-y-2'>
+                        {dropTargetId === `before-${element.id}` && (
+                          <div className='h-1 rounded-full bg-primary' />
+                        )}
+                        <div
+                          className={cn(
+                            'rounded-md border bg-muted/30 p-3 transition-colors',
+                            dropTargetId === element.id && 'border-primary bg-primary/10'
+                          )}
+                          draggable
+                          onDragStart={beginDrag(element.id)}
+                          onDragEnd={finishDrag}
+                          onDragOver={handleDragOverTarget(element.id)}
+                          onDrop={handleDropBefore(element.id)}
+                        >
+                          <div className='flex items-start justify-between gap-3'>
+                            <div className='min-w-0'>
+                              <div className='font-mono text-xs font-semibold'>
+                                {element.id}
+                              </div>
+                              <div className='text-sm font-medium'>
+                                {element.name || element.id}
+                              </div>
+                              <div className='text-xs text-muted-foreground'>
+                                {labelType(element.type)} /{' '}
+                                {element.description || element.owner || 'No description'}
+                              </div>
+                            </div>
+                            <div className='flex items-center gap-2'>
+                              <Badge variant='secondary'>{index + 1}</Badge>
+                              <Button
+                                type='button'
+                                size='sm'
+                                variant='ghost'
+                                onClick={() =>
+                                  onSetIncludedElements(
+                                    includedOrder.filter((id) => id !== element.id)
+                                  )
+                                }
+                              >
+                                移除
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                        {index === selectedElements.length - 1 && (
+                          <div
+                            className='h-1 rounded-full'
+                            onDragOver={handleCanvasBeforeEndDrag}
+                            onDrop={handleCanvasDrop}
+                          />
+                        )}
+                      </div>
+                    ))}
+                    {dropTargetId === 'canvas' && (
+                      <div className='rounded-md border border-dashed border-primary/60 bg-primary/5 px-3 py-2 text-xs text-primary'>
+                        松手会放到末尾
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <EmptyState
+                    title='手动绑定区为空'
+                    description='从左边拖元素进来，或点元素直接绑定。'
+                  />
+                )}
+              </div>
+
+              {showLibrary && (
+                <div className='mt-4'>
+                  <div className='mb-3'>
+                    <div className='text-sm font-semibold'>元素库</div>
+                    <p className='text-xs text-muted-foreground'>
+                      这里是可拖拽元素，直接点一下也会加入这个 View。
+                    </p>
+                  </div>
+                  {candidates.length ? (
+                    <ScrollArea className='h-[260px] rounded-md border bg-background'>
+                      <div className='space-y-4 p-3'>
+                        {orderedTypes.map((type) => (
+                          <div key={type} className='space-y-2'>
+                            <div className='flex items-center gap-2 text-xs font-semibold uppercase text-muted-foreground'>
+                              <span>{labelType(type)}</span>
+                              <Badge variant='outline'>{grouped[type].length}</Badge>
+                            </div>
+                            <div className='space-y-2'>
+                              {grouped[type]
+                                .sort((left, right) => left.id.localeCompare(right.id))
+                                .map((element) => {
+                                  const draggable = true
+                                  return (
+                                    <button
+                                      key={element.id}
+                                      type='button'
+                                      draggable={draggable}
+                                      onDragStart={beginDrag(element.id)}
+                                      onDragEnd={finishDrag}
+                                      onClick={() => onToggle(element.id, true)}
+                                      className={cn(
+                                        'flex w-full items-start gap-3 rounded-md border p-3 text-left transition-colors hover:bg-muted/50',
+                                        draggingId === element.id && 'opacity-50'
+                                      )}
+                                    >
+                                      <span className='min-w-0 flex-1'>
+                                        <span className='block font-mono text-xs font-semibold'>
+                                          {element.id}
+                                        </span>
+                                        <span className='block truncate text-sm'>
+                                          {element.name || element.id}
+                                        </span>
+                                        <span className='line-clamp-1 text-xs text-muted-foreground'>
+                                          {element.description || element.owner || 'No description'}
+                                        </span>
+                                      </span>
+                                      <Badge variant='secondary'>drag</Badge>
+                                    </button>
+                                  )
+                                })}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </ScrollArea>
+                  ) : (
+                    <EmptyState
+                      title='No bindable elements'
+                      description='Create requirements, blocks, tests, or interfaces before binding a View.'
+                    />
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+        </CardContent>
+      </Card>
+  )
+}
+
+function ViewsTab({
+  views,
+  viewpoints,
+  selectedId,
+  setSelectedId,
+  bindableElements,
+  form,
+  attributesText,
+  onNewView,
+  onNewViewpoint,
+  onToggleViewElement,
+  onSetIncludedElements,
+  onUpdateViewAttributes,
+  onUpdateViewQuery,
+  onSaveCurrent,
+  validation,
+  aiReview,
+  busy,
+  onAiReview,
+}: {
+  views: SysmlElement[]
+  viewpoints: SysmlElement[]
+  selectedId: string
+  setSelectedId: (id: string) => void
+  bindableElements: SysmlElement[]
+  form: SysmlElement
+  attributesText: string
+  onNewView: () => void
+  onNewViewpoint: () => void
+  onToggleViewElement: (elementId: string, checked: boolean) => void
+  onSetIncludedElements: (elementIds: string[]) => void
+  onUpdateViewAttributes: (patch: Record<string, unknown>) => void
+  onUpdateViewQuery: (patch: Record<string, unknown>) => void
+  onSaveCurrent: () => void
+  validation: ValidationPayload | null
+  aiReview: AiModelReview | null
+  busy: string
+  onAiReview: () => void
+}) {
+  return (
+    <div className='grid gap-4 xl:grid-cols-[420px_minmax(0,1fr)]'>
+      <Card className='sysml-card self-start'>
+        <CardHeader>
+          <div className='flex items-center justify-between gap-3'>
+            <div>
+              <CardTitle>Views</CardTitle>
+              <CardDescription>
+                First-class model views for scoped Graph and Docs output.
+              </CardDescription>
+            </div>
+            <div className='flex flex-wrap gap-2'>
+              <Button size='sm' variant='outline' onClick={onNewViewpoint}>
+                <Plus className='size-4' />
+                New Viewpoint
+              </Button>
+              <Button size='sm' variant='outline' onClick={onNewView}>
+                <Plus className='size-4' />
+                New View
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className='space-y-4'>
+          <div>
+            <div className='mb-2 flex items-center justify-between gap-2'>
+              <div className='text-sm font-semibold'>Viewpoints</div>
+              <Badge variant='outline'>{viewpoints.length}</Badge>
+            </div>
+            {viewpoints.length ? (
+              <div className='grid gap-2 md:grid-cols-2'>
+                {viewpoints.map((viewpoint) => {
+                  const attributes = viewpoint.attributes || {}
+                  return (
+                    <button
+                      key={viewpoint.id}
+                      type='button'
+                      onClick={() => setSelectedId(viewpoint.id)}
+                      className={cn(
+                        'rounded-md border p-3 text-left transition-colors hover:bg-muted/60',
+                        selectedId === viewpoint.id && 'border-primary bg-muted'
+                      )}
+                    >
+                      <div className='flex items-center justify-between gap-2'>
+                        <span className='font-mono text-sm font-semibold'>
+                          {viewpoint.id}
+                        </span>
+                        <Badge variant='secondary'>Viewpoint</Badge>
+                      </div>
+                      <div className='mt-1 text-sm font-medium'>
+                        {viewpoint.name || viewpoint.id}
+                      </div>
+                      <p className='mt-1 line-clamp-2 text-xs text-muted-foreground'>
+                        {String(attributes.purpose || viewpoint.description || 'No purpose yet')}
+                      </p>
+                    </button>
+                  )
+                })}
+              </div>
+            ) : (
+              <EmptyState
+                title='No Viewpoints yet'
+                description='Create a Viewpoint first, then select it in a View.'
+              />
+            )}
+          </div>
+          <Separator />
+          <div>
+            <div className='mb-2 flex items-center justify-between gap-2'>
+              <div className='text-sm font-semibold'>Views</div>
+              <Badge variant='outline'>{views.length}</Badge>
+            </div>
+            {views.length ? (
+              <div className='grid gap-2 md:grid-cols-2'>
+                {views.map((view) => {
+                  const attributes = view.attributes || {}
+                  const included = Array.isArray(attributes.included_elements)
+                    ? attributes.included_elements.length
+                    : 0
+                  return (
+                    <button
+                      key={view.id}
+                      type='button'
+                      onClick={() => setSelectedId(view.id)}
+                      className={cn(
+                        'rounded-md border p-3 text-left transition-colors hover:bg-muted/60',
+                        selectedId === view.id && 'border-primary bg-muted'
+                      )}
+                    >
+                      <div className='flex items-center justify-between gap-2'>
+                        <span className='font-mono text-sm font-semibold'>
+                          {view.id}
+                        </span>
+                        <Badge variant='secondary'>{included} linked</Badge>
+                      </div>
+                      <div className='mt-1 text-sm font-medium'>
+                        {view.name || view.id}
+                      </div>
+                      <p className='mt-1 line-clamp-2 text-xs text-muted-foreground'>
+                        {String(attributes.viewpoint || 'General viewpoint')} /{' '}
+                        {view.description || 'No description'}
+                      </p>
+                    </button>
+                  )
+                })}
+              </div>
+            ) : (
+              <EmptyState
+                title='No Views yet'
+                description='Create a View to bind elements and drive scoped Graph/Docs output.'
+              />
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className='space-y-4'>
+        <Card className='sysml-card'>
+        <CardHeader>
+          <div className='flex items-center justify-between gap-3'>
+            <div>
+              <CardTitle>View Studio</CardTitle>
+              <CardDescription>
+                Dedicated controls for View and Viewpoint configuration.
+              </CardDescription>
+            </div>
+            <div className='flex items-center gap-2'>
+              <Badge variant='secondary'>
+                {form.type === 'View' || form.type === 'Viewpoint'
+                  ? labelType(form.type)
+                  : 'Idle'}
+              </Badge>
+              <Button
+                size='sm'
+                onClick={onSaveCurrent}
+                disabled={
+                  busy === 'save-element' ||
+                  (form.type !== 'View' && form.type !== 'Viewpoint')
+                }
+              >
+                <Save className='size-4' />
+                保存当前
+              </Button>
+            </div>
+            </div>
+          </CardHeader>
+        <CardContent>
+          {form.type === 'View' ? (
+            <ViewDefinitionPanel
+              elements={bindableElements}
+              viewpoints={viewpoints}
+              viewId={form.id}
+              attributesText={attributesText}
+              onToggle={onToggleViewElement}
+              onSetIncludedElements={onSetIncludedElements}
+              onUpdateAttributes={onUpdateViewAttributes}
+              onUpdateQuery={onUpdateViewQuery}
+            />
+          ) : form.type === 'Viewpoint' ? (
+              <ViewpointDefinitionPanel
+                elements={bindableElements}
+                attributesText={attributesText}
+                onUpdateAttributes={onUpdateViewAttributes}
+              />
+            ) : (
+              <EmptyState
+                title='Select a View or Viewpoint'
+                description='Specialized View editing lives here, separate from normal element fields.'
+              />
+            )}
+          </CardContent>
+        </Card>
+
+        <ValidationPanel validation={validation} />
+        <AiModelReviewPanel review={aiReview} busy={busy} onReview={onAiReview} />
+      </div>
+    </div>
+  )
+}
+
+function ViewpointDefinitionPanel({
+  elements,
+  attributesText,
+  onUpdateAttributes,
+}: {
+  elements: SysmlElement[]
+  attributesText: string
+  onUpdateAttributes: (patch: Record<string, unknown>) => void
+}) {
+  const attributes = parseJsonSafe<Record<string, unknown>>(attributesText, {})
+  const defaultQuery =
+    attributes.default_query &&
+    typeof attributes.default_query === 'object' &&
+    !Array.isArray(attributes.default_query)
+      ? (attributes.default_query as Record<string, unknown>)
+      : {}
+  const typeOptions = elementsTypes(elements)
+  const relationOptions = allRelationOptions(elements)
+  const selectedAllowedTypes = stringList(attributes.allowed_types)
+  const selectedRequiredTypes = stringList(attributes.required_types)
+  const selectedAllowedRelations = stringList(attributes.allowed_relations)
+  const selectedQueryTypes = stringList(defaultQuery.types)
+  const selectedQueryRelations = stringList(defaultQuery.relations)
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [showTemplate, setShowTemplate] = useState(false)
+
+  const updateDefaultQuery = (patch: Record<string, unknown>) => {
+    onUpdateAttributes({ default_query: { ...defaultQuery, ...patch } })
+  }
+  const applyPreset = (preset: (typeof viewpointPresets)[number]) => {
+    onUpdateAttributes({
+      purpose: preset.purpose,
+      allowed_types: preset.allowed_types,
+      required_types: preset.required_types,
+      allowed_relations: preset.allowed_relations,
+      default_query: preset.default_query,
+      document_template: preset.document_template,
+    })
+  }
+  const ruleSummary = [
+    `允许：${formatList(selectedAllowedTypes, labelType) || '未限制'}`,
+    `必须：${formatList(selectedRequiredTypes, labelType) || '未设置'}`,
+    `关系：${formatList(selectedAllowedRelations, labelRelation) || '未限制'}`,
+  ]
+  const querySummary = [
+    `默认类型：${formatList(selectedQueryTypes, labelType) || '未限制'}`,
+    `默认关系：${formatList(selectedQueryRelations, labelRelation) || '未限制'}`,
+    `关系深度：${String(defaultQuery.relation_depth ?? 1)}`,
+  ]
+  const documentTemplate = String(attributes.document_template || '')
+  const templateLabel =
+    !documentTemplate || documentTemplate === 'summary-trace-validation'
+      ? '默认摘要/追踪/校验模板'
+      : '自定义模板'
+
+  return (
+    <Card className='border-dashed bg-muted/20'>
+      <CardHeader className='pb-3'>
+        <CardTitle className='text-base'>Viewpoint Setup</CardTitle>
+        <CardDescription>
+          Pick a review scenario first. Advanced rules and document templates stay
+          available when you need precise control.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className='space-y-5'>
+        <Field label='Purpose'>
+          <Textarea
+            rows={3}
+            value={String(attributes.purpose || '')}
+            onChange={(event) => onUpdateAttributes({ purpose: event.target.value })}
+            placeholder='例如：用于需求审查，关注需求、满足关系和验证用例'
+          />
+        </Field>
+
+        <div className='rounded-md border bg-background p-4'>
+          <div className='mb-3 flex flex-wrap items-center justify-between gap-3'>
+            <div>
+              <div className='text-sm font-semibold'>选择一个常用场景</div>
+              <p className='text-xs text-muted-foreground'>
+                系统会自动填好元素类型、关系、默认查询和文档模板。
+              </p>
+            </div>
+            <Badge variant='secondary'>Recommended</Badge>
+          </div>
+          <div className='grid gap-3 md:grid-cols-2 xl:grid-cols-4'>
+            {viewpointPresets.map((preset) => (
+              <button
+                key={preset.key}
+                type='button'
+                className='rounded-lg border bg-muted/20 p-3 text-left transition hover:border-primary hover:bg-background'
+                onClick={() => applyPreset(preset)}
+              >
+                <div className='font-medium'>{preset.label}</div>
+                <div className='mt-1 text-xs text-muted-foreground'>
+                  {preset.description}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className='grid gap-4 lg:grid-cols-3'>
+          <div className='rounded-md border bg-background p-4'>
+            <div className='text-sm font-semibold'>规则摘要</div>
+            <div className='mt-3 space-y-2 text-sm text-muted-foreground'>
+              {ruleSummary.map((line) => (
+                <div key={line}>{line}</div>
               ))}
             </div>
-          </ScrollArea>
-        ) : (
-          <EmptyState
-            title='No bindable elements'
-            description='Create requirements, blocks, tests, or interfaces before binding a View.'
-          />
+          </div>
+          <div className='rounded-md border bg-background p-4'>
+            <div className='text-sm font-semibold'>默认查询</div>
+            <div className='mt-3 space-y-2 text-sm text-muted-foreground'>
+              {querySummary.map((line) => (
+                <div key={line}>{line}</div>
+              ))}
+            </div>
+          </div>
+          <div className='rounded-md border bg-background p-4'>
+            <div className='text-sm font-semibold'>文档输出</div>
+            <div className='mt-3 text-sm text-muted-foreground'>{templateLabel}</div>
+            <div className='mt-3 flex flex-wrap gap-2'>
+              <Button
+                type='button'
+                variant='outline'
+                size='sm'
+                onClick={() => setShowTemplate((current) => !current)}
+              >
+                {showTemplate ? '收起模板' : '编辑模板'}
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <div className='flex flex-wrap gap-2'>
+          <Button
+            type='button'
+            variant='outline'
+            onClick={() => setShowAdvanced((current) => !current)}
+          >
+            {showAdvanced ? '收起高级规则' : '修改高级规则'}
+          </Button>
+          <Button
+            type='button'
+            variant='ghost'
+            onClick={() => {
+              setShowAdvanced(true)
+              setShowTemplate(true)
+            }}
+          >
+            展开全部
+          </Button>
+        </div>
+
+        {showAdvanced && (
+          <div className='space-y-5 rounded-md border bg-background p-4'>
+            <div>
+              <div className='text-sm font-semibold'>Advanced Rules</div>
+              <p className='text-xs text-muted-foreground'>
+                Fine tune what a View may contain and what it should collect by default.
+              </p>
+            </div>
+
+            <div className='grid gap-4 lg:grid-cols-3'>
+              <Field label='Allowed element types'>
+                <MultiCheckGrid
+                  options={typeOptions}
+                  selected={selectedAllowedTypes}
+                  onChange={(next) => onUpdateAttributes({ allowed_types: next })}
+                  label={labelType}
+                />
+              </Field>
+              <Field label='Required element types'>
+                <MultiCheckGrid
+                  options={typeOptions}
+                  selected={selectedRequiredTypes}
+                  onChange={(next) => onUpdateAttributes({ required_types: next })}
+                  label={labelType}
+                />
+              </Field>
+              <Field label='Allowed relations'>
+                <MultiCheckGrid
+                  options={relationOptions}
+                  selected={selectedAllowedRelations}
+                  onChange={(next) => onUpdateAttributes({ allowed_relations: next })}
+                  label={labelRelation}
+                />
+              </Field>
+            </div>
+
+            <div className='rounded-md border bg-muted/20 p-4'>
+              <div className='mb-3'>
+                <div className='text-sm font-semibold'>Default View Query</div>
+                <p className='text-xs text-muted-foreground'>
+                  New or linked Views inherit this query unless they override it.
+                </p>
+              </div>
+              <div className='grid gap-4 lg:grid-cols-2'>
+                <Field label='Default element types'>
+                  <MultiCheckGrid
+                    options={typeOptions}
+                    selected={selectedQueryTypes}
+                    onChange={(next) => updateDefaultQuery({ types: next })}
+                    label={labelType}
+                  />
+                </Field>
+                <Field label='Default relations'>
+                  <MultiCheckGrid
+                    options={relationOptions}
+                    selected={selectedQueryRelations}
+                    onChange={(next) => updateDefaultQuery({ relations: next })}
+                    label={labelRelation}
+                  />
+                </Field>
+                <Field label='Default keyword'>
+                  <Input
+                    value={String(defaultQuery.text || '')}
+                    onChange={(event) => updateDefaultQuery({ text: event.target.value })}
+                    placeholder='留空表示不按关键词过滤'
+                  />
+                </Field>
+                <Field label='Default relation depth'>
+                  <Select
+                    value={String(defaultQuery.relation_depth ?? 1)}
+                    onValueChange={(value) =>
+                      updateDefaultQuery({ relation_depth: Number(value) })
+                    }
+                  >
+                    <SelectTrigger className='w-full'>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value='0'>0 - only matched/manual elements</SelectItem>
+                      <SelectItem value='1'>1 - include directly related elements</SelectItem>
+                      <SelectItem value='2'>2 - include two relation hops</SelectItem>
+                      <SelectItem value='3'>3 - include three relation hops</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Field>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showTemplate && (
+          <div className='space-y-4 rounded-md border bg-background p-4'>
+            <div className='grid gap-4 lg:grid-cols-[minmax(0,1fr)_420px]'>
+              <Field label='Document template'>
+                <Textarea
+                  className='min-h-[260px] font-mono text-xs'
+                  value={documentTemplate}
+                  onChange={(event) =>
+                    onUpdateAttributes({ document_template: event.target.value })
+                  }
+                  placeholder='Use {{view.scope}}, {{view.summary}}, {{view.traceability}}, and {{view.validation}}.'
+                />
+              </Field>
+              <div className='rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground'>
+                <div className='mb-2 font-semibold text-foreground'>Template tokens</div>
+                <div className='space-y-1 font-mono'>
+                  <div>{'{{view.name}}'} / {'{{view.description}}'}</div>
+                  <div>{'{{viewpoint.name}}'} / {'{{viewpoint.purpose}}'}</div>
+                  <div>{'{{view.scope}}'} / {'{{view.summary}}'}</div>
+                  <div>{'{{view.traceability}}'} / {'{{view.validation}}'}</div>
+                </div>
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='sm'
+                  className='mt-4'
+                  onClick={() => onUpdateAttributes({ document_template: defaultViewpointTemplate })}
+                >
+                  使用默认模板
+                </Button>
+              </div>
+            </div>
+          </div>
         )}
       </CardContent>
     </Card>
@@ -2250,6 +3995,51 @@ function AiModelReviewPanel({
         )}
       </CardContent>
     </Card>
+  )
+}
+
+function MultiCheckGrid({
+  options,
+  selected,
+  onChange,
+  label = (value: string) => value,
+}: {
+  options: string[]
+  selected: string[]
+  onChange: (next: string[]) => void
+  label?: (value: string) => string
+}) {
+  if (!options.length) {
+    return (
+      <div className='rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground'>
+        No options available
+      </div>
+    )
+  }
+  return (
+    <div className='grid max-h-[150px] gap-2 overflow-auto rounded-md border bg-muted/20 p-2 sm:grid-cols-2'>
+      {options.map((option) => {
+        const checked = selected.includes(option)
+        return (
+          <label
+            key={option}
+            className='flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-background'
+          >
+            <Checkbox
+              checked={checked}
+              onCheckedChange={(value) => {
+                const next =
+                  value === true
+                    ? Array.from(new Set([...selected, option]))
+                    : selected.filter((item) => item !== option)
+                onChange(next)
+              }}
+            />
+            <span className='truncate'>{label(option)}</span>
+          </label>
+        )
+      })}
+    </div>
   )
 }
 
@@ -2990,6 +4780,7 @@ function nodeAccentColor(type: string) {
     State: 'oklch(0.55 0.16 20)',
     TestCase: 'oklch(0.58 0.15 245)',
     View: 'oklch(0.55 0.1 95)',
+    Viewpoint: 'oklch(0.58 0.12 75)',
   }
   return colors[type] || 'var(--muted-foreground)'
 }
@@ -4314,12 +6105,258 @@ function countBy<T>(items: T[], getKey: (item: T) => string) {
   }, {})
 }
 
-function includedElementIds(attributesText: string) {
+function includedElementList(attributesText: string) {
   const attributes = parseJsonSafe<Record<string, unknown>>(attributesText, {})
   const values = Array.isArray(attributes.included_elements)
     ? attributes.included_elements
     : []
-  return new Set(values.map(String))
+  return values.map(String)
+}
+
+function stringList(value: unknown) {
+  if (Array.isArray(value)) return value.map(String).filter(Boolean)
+  if (typeof value === 'string') {
+    return value
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean)
+  }
+  return []
+}
+
+function elementsTypes(elements: SysmlElement[]) {
+  return Array.from(new Set(elements.map((element) => element.type)))
+    .filter((type) => type !== 'View')
+    .sort()
+}
+
+function allRelationOptions(elements: SysmlElement[]) {
+  const base = [
+    'satisfy',
+    'verify',
+    'refine',
+    'constrain',
+    'compose',
+    'connect',
+    'allocate',
+    'include',
+    'conform',
+  ]
+  const fromModel = elements.flatMap((element) =>
+    (element.relations || []).map((relation) => relation.type)
+  )
+  return Array.from(new Set([...base, ...fromModel].filter(Boolean))).sort()
+}
+
+function formatList(values: string[], label: (value: string) => string) {
+  if (!values.length) return ''
+  const labels = values.map(label)
+  if (labels.length <= 4) return labels.join(' / ')
+  return `${labels.slice(0, 4).join(' / ')} +${labels.length - 4}`
+}
+
+function mergeQuery(base: Record<string, unknown>, override: Record<string, unknown>) {
+  const merged = { ...base }
+  for (const [key, value] of Object.entries(override)) {
+    if (value === null || value === undefined || value === '' || (Array.isArray(value) && !value.length)) {
+      continue
+    }
+    merged[key] = value
+  }
+  return merged
+}
+
+function previewQueryElements(elements: SysmlElement[], query: Record<string, unknown>) {
+  const requestedTypes = new Set(stringList(query.types))
+  const requestedOwners = new Set(stringList(query.owners))
+  const relationFilter = new Set(stringList(query.relations))
+  const text = String(query.text || query.q || '').trim().toLowerCase()
+  const depth = Number(query.relation_depth ?? 0) || 0
+  const hasDirectFilter = requestedTypes.size > 0 || requestedOwners.size > 0 || text.length > 0
+  const byId = new Map(elements.map((element) => [element.id, element]))
+
+  const directMatches = hasDirectFilter
+    ? elements
+        .filter((element) => {
+          if (requestedTypes.size && !requestedTypes.has(element.type)) return false
+          if (requestedOwners.size && !requestedOwners.has(element.owner || '')) return false
+          if (!text) return true
+          const searchable = [
+            element.id,
+            element.name,
+            element.description || '',
+            element.owner || '',
+            JSON.stringify(element.attributes || {}),
+          ]
+            .join(' ')
+            .toLowerCase()
+          return searchable.includes(text)
+        })
+        .map((element) => element.id)
+    : []
+
+  const selected: string[] = [...directMatches]
+  const seen = new Set(selected)
+  let frontier = [...selected]
+  for (let i = 0; i < depth; i += 1) {
+    const nextFrontier: string[] = []
+    for (const elementId of frontier) {
+      const element = byId.get(elementId)
+      if (!element) continue
+      for (const relation of element.relations || []) {
+        if (relationFilter.size && !relationFilter.has(relation.type)) continue
+        const target = String(relation.target || '').trim()
+        if (target && !seen.has(target)) {
+          seen.add(target)
+          selected.push(target)
+          nextFrontier.push(target)
+        }
+      }
+      for (const [candidateId, candidate] of byId) {
+        if (seen.has(candidateId)) continue
+        if (
+          (candidate.relations || []).some(
+            (relation) =>
+              relation.target === elementId &&
+              (!relationFilter.size || relationFilter.has(relation.type))
+          )
+        ) {
+          seen.add(candidateId)
+          selected.push(candidateId)
+          nextFrontier.push(candidateId)
+        }
+      }
+    }
+    frontier = nextFrontier
+  }
+
+  const resolved = selected
+    .map((id) => byId.get(id))
+    .filter((element): element is SysmlElement => Boolean(element))
+
+  return {
+    direct_count: directMatches.length,
+    match_count: resolved.length,
+    matches: resolved,
+    types: stringList(query.types),
+    owners: stringList(query.owners),
+    relations: stringList(query.relations),
+    keyword: String(query.text || query.q || '').trim(),
+    depth,
+    has_filters: hasDirectFilter || relationFilter.size > 0 || depth > 0,
+  }
+}
+
+function QueryPreviewCard({
+  title,
+  note,
+  query,
+  elements,
+  accent = false,
+  emptyLabel = '未设置自动查询条件',
+  explicitElements,
+}: {
+  title: string
+  note?: string
+  query?: Record<string, unknown>
+  elements: SysmlElement[]
+  accent?: boolean
+  emptyLabel?: string
+  explicitElements?: SysmlElement[]
+}) {
+  const preview = useMemo(() => {
+    if (explicitElements) {
+      return {
+        direct_count: explicitElements.length,
+        match_count: explicitElements.length,
+        matches: explicitElements,
+        types: Array.from(new Set(explicitElements.map((element) => element.type))).sort(),
+        owners: Array.from(
+          new Set(explicitElements.map((element) => element.owner || '').filter(Boolean))
+        ).sort(),
+        relations: Array.from(
+          new Set(
+            explicitElements.flatMap((element) =>
+              (element.relations || []).map((relation) => relation.type)
+            )
+          )
+        ).sort(),
+        keyword: '',
+        depth: 0,
+        has_filters: explicitElements.length > 0,
+      }
+    }
+    return previewQueryElements(elements, query || {})
+  }, [elements, explicitElements, query])
+  const hasContent = preview.has_filters
+
+  return (
+    <div
+      className={cn(
+        'rounded-md border bg-background p-4',
+        accent && 'border-primary bg-primary/5'
+      )}
+    >
+      <div className='flex items-start justify-between gap-3'>
+        <div>
+          <div className='text-sm font-semibold'>{title}</div>
+          <p className='text-xs text-muted-foreground'>
+            {note || (hasContent ? '条件会按这些字段组合匹配元素。' : emptyLabel)}
+          </p>
+        </div>
+        <Badge variant={accent ? 'default' : 'outline'}>
+          {preview.match_count} 命中
+        </Badge>
+      </div>
+      {hasContent ? (
+        <div className='mt-3 space-y-3'>
+          <div className='flex flex-wrap gap-2'>
+            <PreviewToken label='类型' values={preview.types.map(labelType)} />
+            <PreviewToken label='负责人' values={preview.owners} />
+            <PreviewToken label='关系' values={preview.relations.map(labelRelation)} />
+          </div>
+          <div className='flex flex-wrap items-center gap-2 text-xs text-muted-foreground'>
+            <span>关键词：{preview.keyword || '无'}</span>
+            <span>深度：{preview.depth}</span>
+            <span>直接命中：{preview.direct_count}</span>
+          </div>
+          <div className='flex flex-wrap gap-2'>
+            {preview.matches.slice(0, 4).map((element) => (
+              <Badge key={element.id} variant='secondary' className='font-normal'>
+                {element.id}
+              </Badge>
+            ))}
+            {preview.matches.length > 4 && (
+              <Badge variant='outline' className='font-normal'>
+                +{preview.matches.length - 4}
+              </Badge>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className='mt-3 rounded-md border border-dashed bg-muted/20 p-3 text-xs text-muted-foreground'>
+          这条查询还没设置任何条件，保存后 View 会主要依赖手动绑定元素。
+        </div>
+      )}
+    </div>
+  )
+}
+
+function PreviewToken({ label, values }: { label: string; values: string[] }) {
+  return (
+    <div className='flex flex-wrap items-center gap-2 rounded-md border bg-muted/20 px-3 py-2 text-xs'>
+      <span className='font-medium text-muted-foreground'>{label}</span>
+      {values.length ? (
+        values.map((value) => (
+          <Badge key={`${label}-${value}`} variant='secondary' className='font-normal'>
+            {value}
+          </Badge>
+        ))
+      ) : (
+        <span className='text-muted-foreground'>未限制</span>
+      )}
+    </div>
+  )
 }
 
 function parseJson<T>(value: string, label: string, fallback: T): T {

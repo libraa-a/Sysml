@@ -814,7 +814,15 @@ def normalize_relations(relations: Any) -> list[dict[str, str]]:
 
 def project_summary(project: dict[str, Any]) -> dict[str, Any]:
     branch_count = len(project.get("branches", {}))
-    element_count = sum(len(branch.get("elements", {})) for branch in project.get("branches", {}).values())
+    branches = project.get("branches", {})
+    element_count = sum(len(branch.get("elements", {})) for branch in branches.values())
+    document_count = sum(len(branch.get("documents", [])) for branch in branches.values())
+    view_count = sum(
+        1
+        for branch in branches.values()
+        for element in branch.get("elements", {}).values()
+        if element.get("type") in {"View", "Viewpoint"}
+    )
     return {
         "id": project.get("id", ""),
         "name": project.get("name", ""),
@@ -824,6 +832,8 @@ def project_summary(project: dict[str, Any]) -> dict[str, Any]:
         "updated_at": project.get("updated_at", ""),
         "branches": branch_count,
         "elements": element_count,
+        "documents": document_count,
+        "views": view_count,
         "commits": len(project.get("commits", [])),
         "tags": len(project.get("tags", [])),
     }

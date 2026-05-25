@@ -4,9 +4,11 @@ import {
   Boxes,
   Braces,
   ChartNoAxesCombined,
+  Eye,
   FileText,
   GitBranch,
   LayoutDashboard,
+  MessageCircle,
   Network,
   NotebookTabs,
   ShieldCheck,
@@ -26,7 +28,7 @@ export const sidebarData: SidebarData = {
     {
       name: 'SysML DocGen',
       logo: Braces,
-      plan: 'MMS / VE / MDK / DocGen',
+      plan: 'Projects / Views / Docs',
     },
     {
       name: 'Satellite Power',
@@ -45,44 +47,53 @@ export const sidebarData: SidebarData = {
       items: [
         {
           title: 'Overview',
-          url: '/#model',
+          url: '/#overview',
           icon: LayoutDashboard,
         },
         {
-          title: 'Workflow',
+          title: 'Projects',
+          url: '/#projects',
+          icon: Boxes,
+        },
+        {
+          title: 'Model',
+          url: '/#model',
+          icon: Archive,
+        },
+        {
+          title: 'Views',
+          url: '/#views',
+          icon: Eye,
+        },
+        {
+          title: 'Graph',
+          url: '/#diagram',
+          icon: Network,
+        },
+        {
+          title: 'Trace',
+          url: '/#trace',
           icon: Workflow,
-          items: [
-            {
-              title: 'MMS Models',
-              url: '/#model',
-              icon: Boxes,
-            },
-            {
-              title: 'VE Graph',
-              url: '/#diagram',
-              icon: Network,
-            },
-            {
-              title: 'Trace Matrix',
-              url: '/#trace',
-              icon: Workflow,
-            },
-            {
-              title: 'Versions',
-              url: '/#version',
-              icon: GitBranch,
-            },
-            {
-              title: 'DocGen Docs',
-              url: '/#docgen',
-              icon: FileText,
-            },
-            {
-              title: 'MDK',
-              url: '/#mdk',
-              icon: Wrench,
-            },
-          ],
+        },
+        {
+          title: 'Versions',
+          url: '/#version',
+          icon: GitBranch,
+        },
+        {
+          title: 'Docs',
+          url: '/#docgen',
+          icon: FileText,
+        },
+        {
+          title: 'MDK',
+          url: '/#mdk',
+          icon: Wrench,
+        },
+        {
+          title: 'Assistant',
+          url: '/#assistant',
+          icon: MessageCircle,
         },
       ],
     },

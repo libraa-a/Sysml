@@ -66,6 +66,25 @@ class DocGenTest(unittest.TestCase):
                             "attributes": {"method": "Test", "criterion": "通过"},
                             "relations": [],
                         },
+                        "VP-REQ-REVIEW": {
+                            "id": "VP-REQ-REVIEW",
+                            "name": "Requirement Review Viewpoint",
+                            "type": "Viewpoint",
+                            "stereotype": "viewpoint",
+                            "description": "Review requirements, satisfaction, and verification.",
+                            "attributes": {
+                                "purpose": "Check requirement closure.",
+                                "allowed_types": ["Requirement", "Block", "TestCase"],
+                                "allowed_relations": ["satisfy", "verify"],
+                                "default_query": {
+                                    "types": ["Requirement"],
+                                    "text": "REQ-001",
+                                    "relation_depth": 1,
+                                    "relations": ["verify"],
+                                },
+                            },
+                            "relations": [],
+                        },
                         "VIEW-POWER": {
                             "id": "VIEW-POWER",
                             "name": "Power View",
@@ -298,6 +317,161 @@ class DocGenTest(unittest.TestCase):
 
         payload = view_payload(elements, "VIEW-EMPTY-QUERY")
         self.assertEqual(payload["element_ids"], ["VIEW-EMPTY-QUERY", "REQ-001"])
+
+    def test_view_scope_preserves_manual_inclusion_order(self):
+        elements = self.project["branches"]["main"]["elements"]
+        elements["VIEW-ORDER"] = {
+            "id": "VIEW-ORDER",
+            "name": "Ordered View",
+            "type": "View",
+            "stereotype": "view",
+            "description": "Manual order should be preserved.",
+            "attributes": {
+                "included_elements": ["TST-001", "REQ-001", "BLK-001"],
+            },
+            "relations": [],
+        }
+
+        payload = view_payload(elements, "VIEW-ORDER")
+        self.assertEqual(payload["element_ids"], ["VIEW-ORDER", "TST-001", "REQ-001", "BLK-001"])
+        self.assertEqual(payload["manual_element_ids"], ["TST-001", "REQ-001", "BLK-001"])
+        self.assertEqual(payload["content_element_ids"], ["TST-001", "REQ-001", "BLK-001"])
+        self.assertEqual(payload["scope_breakdown"]["manual"], 3)
+        self.assertEqual(payload["scope_breakdown"]["content"], 3)
+
+    def test_viewpoint_default_query_is_resolved_by_view(self):
+        elements = self.project["branches"]["main"]["elements"]
+        elements["VIEW-VP-QUERY"] = {
+            "id": "VIEW-VP-QUERY",
+            "name": "Viewpoint Driven View",
+            "type": "View",
+            "attributes": {"viewpoint_id": "VP-REQ-REVIEW", "query": {"relation_depth": 1}},
+            "relations": [],
+        }
+
+        payload = view_payload(elements, "VIEW-VP-QUERY")
+        self.assertEqual(payload["viewpoint"]["id"], "VP-REQ-REVIEW")
+        self.assertIn("REQ-001", payload["element_ids"])
+        self.assertIn("TST-001", payload["element_ids"])
+        self.assertNotIn("BLK-001", payload["element_ids"])
+        self.assertIn("REQ-001", payload["query_element_ids"])
+        self.assertIn("TST-001", payload["query_element_ids"])
+        self.assertEqual(payload["scope_breakdown"]["query"], len(payload["query_element_ids"]))
+
+        diagram = build_view_diagram(elements, "VIEW-VP-QUERY")
+        self.assertTrue(
+            any(
+                edge["source"] == "VIEW-VP-QUERY"
+                and edge["target"] == "VP-REQ-REVIEW"
+                and edge["type"] == "conform"
+                for edge in diagram["edges"]
+            )
+        )
+
+    def test_viewpoint_validation_reports_rule_violations(self):
+        elements = self.project["branches"]["main"]["elements"]
+        elements["VP-STRICT"] = {
+            "id": "VP-STRICT",
+            "name": "Strict Requirements Viewpoint",
+            "type": "Viewpoint",
+            "stereotype": "viewpoint",
+            "description": "Only requirements with verification are allowed.",
+            "attributes": {
+                "allowed_types": ["Requirement"],
+                "required_types": ["TestCase"],
+                "allowed_relations": ["verify"],
+            },
+            "relations": [],
+        }
+        elements["VIEW-STRICT"] = {
+            "id": "VIEW-STRICT",
+            "name": "Strict View",
+            "type": "View",
+            "stereotype": "view",
+            "description": "A deliberately invalid Viewpoint scope.",
+            "attributes": {
+                "viewpoint_id": "VP-STRICT",
+                "included_elements": ["REQ-001", "BLK-001"],
+            },
+            "relations": [],
+        }
+
+        result = validate_repository(elements)
+        messages = [
+            issue["message"]
+            for issue in result["issues"]
+            if issue["element_id"] == "VIEW-STRICT"
+        ]
+        self.assertTrue(any("does not allow Block element BLK-001" in message for message in messages))
+        self.assertTrue(any("requires at least one TestCase" in message for message in messages))
+        self.assertTrue(any("does not allow relation satisfy" in message for message in messages))
+
+    def test_viewpoint_document_template_controls_view_markdown(self):
+        elements = self.project["branches"]["main"]["elements"]
+        elements["VP-DOC"] = {
+            "id": "VP-DOC",
+            "name": "Documented Viewpoint",
+            "type": "Viewpoint",
+            "stereotype": "viewpoint",
+            "description": "Owns a markdown section template.",
+            "attributes": {
+                "purpose": "Make focused review chapters.",
+                "document_template": (
+                    "# {{view.name}}\n\n"
+                    "Purpose: {{viewpoint.purpose}}\n\n"
+                    "## Scope\n\n{{view.scope}}\n\n"
+                    "## Validation\n\n{{view.validation}}\n"
+                ),
+            },
+            "relations": [],
+        }
+        elements["VIEW-DOC"] = {
+            "id": "VIEW-DOC",
+            "name": "Doc View",
+            "type": "View",
+            "stereotype": "view",
+            "description": "Rendered with a Viewpoint template.",
+            "attributes": {
+                "viewpoint_id": "VP-DOC",
+                "included_elements": ["REQ-001"],
+            },
+            "relations": [],
+        }
+
+        markdown = render_view_markdown(elements, "VIEW-DOC")
+        self.assertIn("# Doc View", markdown)
+        self.assertIn("Purpose: Make focused review chapters.", markdown)
+        self.assertIn("| Type | ID | Name |", markdown)
+        self.assertIn("REQ-001", markdown)
+        self.assertNotIn("### View Summary", markdown)
+
+    def test_view_payload_exposes_manual_query_and_content_scopes(self):
+        elements = self.project["branches"]["main"]["elements"]
+        elements["VIEW-SCOPE"] = {
+            "id": "VIEW-SCOPE",
+            "name": "Scope View",
+            "type": "View",
+            "stereotype": "view",
+            "description": "Shows all three scope layers.",
+            "attributes": {
+                "viewpoint_id": "VP-REQ-REVIEW",
+                "included_elements": ["BLK-001"],
+                "query": {
+                    "types": ["Requirement"],
+                    "text": "REQ-001",
+                    "relation_depth": 1,
+                    "relations": ["verify"],
+                },
+            },
+            "relations": [],
+        }
+
+        payload = view_payload(elements, "VIEW-SCOPE")
+        self.assertIn("BLK-001", payload["manual_element_ids"])
+        self.assertIn("REQ-001", payload["query_element_ids"])
+        self.assertIn("REQ-001", payload["content_element_ids"])
+        self.assertGreaterEqual(payload["content_count"], 1)
+        self.assertGreaterEqual(payload["scope_breakdown"]["automatic"], 1)
 
     def test_template_renders_view_token(self):
         elements = self.project["branches"]["main"]["elements"]
