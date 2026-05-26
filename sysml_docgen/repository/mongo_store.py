@@ -135,6 +135,20 @@ class MongoModelStore(ModelStore):
         row.pop("_id", None)
         return row
 
+    def list_users(self) -> list[dict[str, Any]]:
+        rows = self.user_collection.find({}).sort("username", 1)
+        result = []
+        for row in rows:
+            row.pop("_id", None)
+            result.append(row)
+        return result
+
+    def ensure_user_sample_project(self, username: str) -> dict[str, Any]:
+        return super().ensure_user_sample_project(username)
+
+    def list_projects(self, username: str | None = None) -> list[dict[str, Any]]:
+        return super().list_projects(username)
+
     def create_user(
         self,
         username: str,
@@ -158,6 +172,30 @@ class MongoModelStore(ModelStore):
             if "duplicate key" in str(exc).lower() or "e11000" in str(exc).lower():
                 raise ConflictError(f"用户名 '{username}' 已存在") from exc
             raise
+        return {
+            "username": username,
+            "password_hash": password_hash,
+            "role": role,
+            "display": display,
+            "created_at": created_at,
+        }
+
+    def upsert_user(self, username: str, password_hash: str, role: str, display: str) -> dict[str, Any]:
+        created_at = utc_now()
+        self.user_collection.update_one(
+            {"username": username},
+            {
+                "$set": {
+                    "password_hash": password_hash,
+                    "role": role,
+                    "display": display,
+                },
+                "$setOnInsert": {
+                    "created_at": created_at,
+                },
+            },
+            upsert=True,
+        )
         return {
             "username": username,
             "password_hash": password_hash,

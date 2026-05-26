@@ -5,8 +5,9 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useNavigate } from '@tanstack/react-router'
 import { ArrowRight, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { sleep, cn } from '@/lib/utils'
+import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import { requestPasswordReset } from '@/lib/sysml-api'
 import {
   Form,
   FormControl,
@@ -19,7 +20,7 @@ import { Input } from '@/components/ui/input'
 
 const formSchema = z.object({
   email: z.email({
-    error: (iss) => (iss.input === '' ? 'Please enter your email.' : undefined),
+    error: (iss) => (iss.input === '' ? '请输入邮箱。' : undefined),
   }),
 })
 
@@ -35,19 +36,21 @@ export function ForgotPasswordForm({
     defaultValues: { email: '' },
   })
 
-  function onSubmit(data: z.infer<typeof formSchema>) {
+  async function onSubmit(data: z.infer<typeof formSchema>) {
     setIsLoading(true)
-
-    toast.promise(sleep(2000), {
-      loading: 'Sending email...',
-      success: () => {
-        setIsLoading(false)
-        form.reset()
-        navigate({ to: '/otp' })
-        return `Email sent to ${data.email}`
-      },
-      error: 'Error',
-    })
+    try {
+      const payload = await requestPasswordReset(data.email)
+      form.reset()
+      navigate({
+        to: '/otp',
+        search: { requestId: payload.request_id, email: data.email },
+      })
+      toast.success(`验证码已发送到 ${data.email}`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '重置请求失败')
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   return (
@@ -70,8 +73,8 @@ export function ForgotPasswordForm({
             </FormItem>
           )}
         />
-        <Button className='mt-2' disabled={isLoading}>
-          Continue
+        <Button type='submit' className='mt-2' disabled={isLoading}>
+          发送验证码
           {isLoading ? <Loader2 className='animate-spin' /> : <ArrowRight />}
         </Button>
       </form>

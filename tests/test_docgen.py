@@ -492,7 +492,7 @@ class DocGenTest(unittest.TestCase):
         identity = login("engineer", "engineer123")
         self.assertIsNotNone(identity)
         verified = verify_token(identity["token"])
-        self.assertEqual(verified["role"], "author")
+        self.assertEqual(verified["role"], "user")
 
 
 if __name__ == "__main__":

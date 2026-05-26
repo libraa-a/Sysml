@@ -1,5 +1,6 @@
 import { BadgeCheck, ChevronsUpDown, LogOut } from 'lucide-react'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Badge } from '@/components/ui/badge'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,6 +21,7 @@ type NavUserProps = {
     name: string
     email: string
     avatar: string
+    role?: string
   }
 }
 
@@ -42,6 +44,11 @@ export function NavUser({ user }: NavUserProps) {
                 <span className='truncate font-semibold'>{user.name}</span>
                 <span className='truncate text-xs'>{user.email}</span>
               </div>
+              {user.role ? (
+                <Badge variant='secondary' className='ms-1 hidden sm:inline-flex'>
+                  {user.role}
+                </Badge>
+              ) : null}
               <ChevronsUpDown className='ms-auto size-4' />
             </SidebarMenuButton>
           </DropdownMenuTrigger>
@@ -59,6 +66,11 @@ export function NavUser({ user }: NavUserProps) {
                 <div className='grid flex-1 text-start text-sm leading-tight'>
                   <span className='truncate font-semibold'>{user.name}</span>
                   <span className='truncate text-xs'>{user.email}</span>
+                  {user.role ? (
+                    <span className='mt-1'>
+                      <Badge variant='secondary'>{user.role}</Badge>
+                    </span>
+                  ) : null}
                 </div>
               </div>
             </DropdownMenuLabel>

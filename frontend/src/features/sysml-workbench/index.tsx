@@ -34,6 +34,7 @@ import {
   type OnNodesChange,
   type OnReconnect,
 } from '@xyflow/react'
+import { useNavigate } from '@tanstack/react-router'
 import {
   AlertCircle,
   Archive,
@@ -41,6 +42,7 @@ import {
   Braces,
   CheckCircle2,
   Code2,
+  Copy,
   Download,
   Edit3,
   FileText,
@@ -60,6 +62,7 @@ import {
   Save,
   Search,
   Send,
+  Share2,
   ShieldCheck,
   Sparkles,
   Trash2,
@@ -102,6 +105,8 @@ import {
   type TraceabilityRow,
   type ValidationPayload,
   type ViewPayload,
+  copySharedProject,
+  publishProject,
 } from '@/lib/sysml-api'
 import { cn } from '@/lib/utils'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -388,12 +393,13 @@ const nodeWidth = 230
 const nodeHeight = 116
 
 export function SysmlWorkbench() {
+  const navigate = useNavigate()
   const [identity, setIdentity] = useState<Identity | null>(() => loadIdentity())
   const [loginForm, setLoginForm] = useState({
     username: identity?.username || 'engineer',
     password: 'engineer123',
   })
-  const [role, setRole] = useState(identity?.role || 'author')
+  const [role, setRole] = useState(identity?.role || 'user')
   const [projects, setProjects] = useState<Project[]>([])
   const [projectId, setProjectId] = useState('')
   const [newProject, setNewProject] = useState({
@@ -401,6 +407,7 @@ export function SysmlWorkbench() {
     name: '',
     organization: '',
     description: '',
+    members: '',
   })
   const [branches, setBranches] = useState<Branch[]>([])
   const [branch, setBranch] = useState('main')
@@ -538,21 +545,106 @@ export function SysmlWorkbench() {
     loadDiagram()
   }, [diagramType, projectId, branch, selectedViewId])
 
-  async function bootstrap() {
+  async function bootstrap(
+    nextIdentity: Identity | null = identity,
+    nextRole: Identity['role'] = role
+  ) {
+    if (!nextIdentity) {
+      setLoading(false)
+      return
+    }
     setLoading(true)
     try {
       const [metamodelPayload, projectsPayload] = await Promise.all([
-        api<Metamodel>('/api/metamodel', { identity, role }),
-        api<{ projects: Project[] }>('/api/projects', { identity, role }),
+        api<Metamodel>('/api/metamodel', {
+          identity: nextIdentity,
+          role: nextRole,
+        }),
+        api<{ projects: Project[] }>('/api/projects', {
+          identity: nextIdentity,
+          role: nextRole,
+        }),
       ])
       setMetamodel(metamodelPayload)
       setProjects(projectsPayload.projects)
-      selectProject(projectsPayload.projects[0]?.id || '')
+      const preferredProject =
+        projectsPayload.projects.find(
+          (item) =>
+            item.kind === 'workspace' &&
+            item.owner === nextIdentity.username &&
+            item.visibility !== 'shared'
+        ) ||
+        projectsPayload.projects[0] ||
+        null
+      selectProject(preferredProject?.id || '')
     } catch (error) {
       notifyError(error)
     } finally {
       setLoading(false)
     }
+  }
+
+  function resetWorkbenchState() {
+    setProjects([])
+    setProjectId('')
+    setBranches([])
+    setBranch('main')
+    setMetamodel(null)
+    setElements([])
+    setAllElements([])
+    setSelectedId('')
+    setTypeFilter('all')
+    setQuery('')
+    setForm(defaultElement('Requirement', null))
+    setAttributesText('{}')
+    setRelationsText('[]')
+    setValidation(null)
+    setDiagramType('requirements')
+    setDiagram(null)
+    setViews([])
+    setSelectedViewId('all')
+    setViewScope(null)
+    setDiagramPositions({})
+    setTraceability([])
+    setCommits([])
+    setTags([])
+    setAuditEvents([])
+    setDiff(null)
+    setDiffFrom('working')
+    setDiffTo('working')
+    setRollbackCommit('')
+    setNewBranch('')
+    setNewTag('')
+    setMergeSource('')
+    setForceMerge(false)
+    setNewProject({
+      id: '',
+      name: '',
+      organization: '',
+      description: '',
+      members: '',
+    })
+    setTemplate(defaultTemplate)
+    setDocViewId('all')
+    setDocuments([])
+    setCurrentDocument(null)
+    setAiModelReview(null)
+    setAiClosureSuggestions(null)
+    setAiVersionImpact(null)
+    setAiDocumentReview(null)
+    setMdkAdapters([])
+    setMdkTool('json')
+    setMdkFilename('model.json')
+    setMdkContent(sampleMdkJson)
+    setMdkParseResult(null)
+    setMdkImportJob(null)
+    setMdkCommit(true)
+    setMdkMessage('MDK frontend import')
+    setAssistantQuestion('')
+    setAssistantMessages([])
+    setActiveTab(tabFromHash(window.location.hash))
+    setLoading(false)
+    setBusy('')
   }
 
   function selectProject(nextProjectId: string) {
@@ -601,7 +693,7 @@ export function SysmlWorkbench() {
 
   async function createProject() {
     if (!newProject.name.trim()) {
-      toast.error('请先填写项目名称')
+      toast.error('请先填写共享项目名称')
       return
     }
     setBusy('create-project')
@@ -615,6 +707,7 @@ export function SysmlWorkbench() {
           name: newProject.name.trim(),
           organization: newProject.organization.trim() || undefined,
           description: newProject.description.trim(),
+          members: newProject.members.trim(),
         }),
       })
       const projectsPayload = await api<{ projects: Project[] }>('/api/projects', {
@@ -623,8 +716,73 @@ export function SysmlWorkbench() {
       })
       setProjects(projectsPayload.projects)
       selectProject(payload.project.id)
-      setNewProject({ id: '', name: '', organization: '', description: '' })
+      setNewProject({
+        id: '',
+        name: '',
+        organization: '',
+        description: '',
+        members: '',
+      })
       toast.success(`项目已创建：${payload.project.name || payload.project.id}`)
+    } catch (error) {
+      notifyError(error)
+    } finally {
+      setBusy('')
+    }
+  }
+
+  async function publishCurrentProject() {
+    if (!projectId || !project) return
+    if (project.visibility === 'shared') {
+      toast.message('当前项目已经在共享库中')
+      return
+    }
+    setBusy('publish-project')
+    try {
+      const payload = await publishProject(
+        projectId,
+        {
+          id: `${project.id}-shared-${Date.now().toString(36)}`,
+          name: `${project.name || project.id} 共享版`,
+          organization: project.organization,
+          description: project.description,
+          members: project.members || [],
+        },
+        { identity, role }
+      )
+      const projectsPayload = await api<{ projects: Project[] }>('/api/projects', {
+        identity,
+        role,
+      })
+      setProjects(projectsPayload.projects)
+      selectProject(payload.project.id)
+      toast.success(`已发布到共享库：${payload.project.name || payload.project.id}`)
+    } catch (error) {
+      notifyError(error)
+    } finally {
+      setBusy('')
+    }
+  }
+
+  async function copyProjectToWorkspace(sourceProjectId: string) {
+    if (!identity) return
+    setBusy(`copy-project:${sourceProjectId}`)
+    try {
+      const payload = await copySharedProject(
+        sourceProjectId,
+        {
+          id: `${identity.username}-${sourceProjectId}-copy-${Date.now().toString(36)}`,
+          name: `复制自 ${sourceProjectId}`,
+        },
+        { identity, role }
+      )
+      const projectsPayload = await api<{ projects: Project[] }>('/api/projects', {
+        identity,
+        role,
+      })
+      setProjects(projectsPayload.projects)
+      selectProject(payload.project.id)
+      toast.success(`已复制到个人工作台：${payload.project.name || payload.project.id}`)
     } catch (error) {
       notifyError(error)
     } finally {
@@ -839,8 +997,9 @@ export function SysmlWorkbench() {
       setIdentity(payload.identity)
       setRole(payload.identity.role)
       saveIdentity(payload.identity)
+      resetWorkbenchState()
       toast.success(`已登录：${payload.identity.display || payload.identity.username}`)
-      await bootstrap()
+      await bootstrap(payload.identity, payload.identity.role)
     } catch (error) {
       notifyError(error)
     } finally {
@@ -849,10 +1008,13 @@ export function SysmlWorkbench() {
   }
 
   function handleLogout() {
+    resetWorkbenchState()
     setIdentity(null)
     saveIdentity(null)
-    setRole('author')
+    setRole('user')
+    setLoginForm({ username: '', password: '' })
     toast.success('已退出登录')
+    navigate({ to: '/sign-in', replace: true })
   }
 
   function startNewElement(type = form.type || 'Requirement') {
@@ -1598,6 +1760,11 @@ export function SysmlWorkbench() {
             <Badge variant='outline' className='hidden sm:inline-flex'>
               FastAPI + Shadcn Admin
             </Badge>
+            {identity ? (
+              <Badge variant='secondary' className='hidden sm:inline-flex'>
+                {identity.username}
+              </Badge>
+            ) : null}
           </div>
           <p className='mt-0.5 hidden text-xs text-muted-foreground sm:block'>
             MMS / VE / MDK / DocGen integrated workbench
@@ -1605,8 +1772,6 @@ export function SysmlWorkbench() {
         </div>
         <IdentityDialog
           identity={identity}
-          role={role}
-          setRole={setRole}
           loginForm={loginForm}
           setLoginForm={setLoginForm}
           onLogin={handleLogin}
@@ -1814,6 +1979,8 @@ export function SysmlWorkbench() {
                   onSelectProject={selectProject}
                   onCreateProject={createProject}
                   onOpenWorkbench={() => selectTab('model')}
+                  onPublishProject={publishCurrentProject}
+                  onCopyProject={copyProjectToWorkspace}
                   busy={busy}
                 />
               </TabsContent>
@@ -2027,8 +2194,6 @@ type ModelTabProps = {
 
 function IdentityDialog({
   identity,
-  role,
-  setRole,
   loginForm,
   setLoginForm,
   onLogin,
@@ -2036,8 +2201,6 @@ function IdentityDialog({
   busy,
 }: {
   identity: Identity | null
-  role: Identity['role']
-  setRole: (role: Identity['role']) => void
   loginForm: { username: string; password: string }
   setLoginForm: React.Dispatch<
     React.SetStateAction<{ username: string; password: string }>
@@ -2047,7 +2210,6 @@ function IdentityDialog({
   busy: string
 }) {
   const signedName = identity?.display || identity?.username || 'Guest'
-  const signedRole = identity?.role || role
 
   return (
     <Dialog>
@@ -2055,16 +2217,13 @@ function IdentityDialog({
         <Button variant='outline' className='gap-2'>
           <UserCircle className='size-4' />
           <span className='hidden sm:inline'>{signedName}</span>
-          <Badge variant='secondary' className='rounded-sm'>
-            {signedRole}
-          </Badge>
         </Button>
       </DialogTrigger>
       <DialogContent className='sm:max-w-[520px]'>
         <DialogHeader>
           <DialogTitle>Account & Access</DialogTitle>
           <DialogDescription>
-            Identity controls model writes, commits, rollback, and branch merge permissions.
+            Each signed-in user works with an independent sample model repository.
           </DialogDescription>
         </DialogHeader>
         <div className='rounded-lg border bg-muted/30 p-4'>
@@ -2075,7 +2234,7 @@ function IdentityDialog({
             <div className='min-w-0'>
               <div className='truncate font-medium'>{signedName}</div>
               <div className='text-sm text-muted-foreground'>
-                {identity?.username || 'Guest'} / {signedRole}
+                {identity?.username || 'Guest'}
               </div>
             </div>
           </div>
@@ -2105,23 +2264,6 @@ function IdentityDialog({
             />
           </Field>
         </div>
-        <Field label='Request role'>
-          <Select
-            value={role}
-            onValueChange={(value) =>
-              setRole(value as 'admin' | 'author' | 'reader')
-            }
-          >
-            <SelectTrigger className='w-full'>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value='author'>author</SelectItem>
-              <SelectItem value='reader'>reader</SelectItem>
-              <SelectItem value='admin'>admin</SelectItem>
-            </SelectContent>
-          </Select>
-        </Field>
         <div className='flex flex-wrap justify-end gap-2'>
           <Button variant='outline' onClick={onLogout}>
             <LogOut className='size-4' />
@@ -2689,6 +2831,8 @@ function ProjectsTab({
   onSelectProject,
   onCreateProject,
   onOpenWorkbench,
+  onPublishProject,
+  onCopyProject,
   busy,
 }: {
   projects: Project[]
@@ -2700,16 +2844,20 @@ function ProjectsTab({
     name: string
     organization: string
     description: string
+    members: string
   }
   setNewProject: (value: {
     id: string
     name: string
     organization: string
     description: string
+    members: string
   }) => void
   onSelectProject: (projectId: string) => void
   onCreateProject: () => void
   onOpenWorkbench: () => void
+  onPublishProject: () => void
+  onCopyProject: (projectId: string) => void
   busy: string
 }) {
   const currentProject = projects.find((project) => project.id === currentProjectId)
@@ -2750,10 +2898,17 @@ function ProjectsTab({
                 {projects.map((project) => {
                   const active = project.id === currentProjectId
                   return (
-                    <button
+                    <div
                       key={project.id}
-                      type='button'
                       onClick={() => onSelectProject(project.id)}
+                      role='button'
+                      tabIndex={0}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          onSelectProject(project.id)
+                        }
+                      }}
                       className={cn(
                         'rounded-lg border bg-background p-4 text-left transition hover:border-primary hover:bg-muted/30',
                         active && 'border-primary bg-primary/5'
@@ -2770,6 +2925,20 @@ function ProjectsTab({
                           <p className='mt-1 line-clamp-2 text-sm text-muted-foreground'>
                             {project.description || 'No description yet'}
                           </p>
+                          <div className='mt-2 flex flex-wrap gap-2'>
+                            <Badge variant={project.visibility === 'shared' ? 'default' : 'secondary'}>
+                              {project.visibility === 'shared'
+                                ? '共享库'
+                                : project.kind === 'workspace'
+                                  ? '个人工作台'
+                                  : '个人副本'}
+                            </Badge>
+                            {project.member_count ? (
+                              <Badge variant='outline'>
+                                {project.member_count} members
+                              </Badge>
+                            ) : null}
+                          </div>
                         </div>
                         <Badge variant={active ? 'default' : 'secondary'}>
                           {active ? '当前项目' : '打开'}
@@ -2785,7 +2954,46 @@ function ProjectsTab({
                         {project.organization || 'No organization'} / updated{' '}
                         {project.updated_at || '-'}
                       </div>
-                    </button>
+                      <div className='mt-3 flex flex-wrap gap-2'>
+                        {project.visibility !== 'shared' ? (
+                          <Button
+                            type='button'
+                            size='sm'
+                            variant='outline'
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              onPublishProject()
+                            }}
+                            disabled={busy === 'publish-project'}
+                          >
+                            {busy === 'publish-project' ? (
+                              <Loader2 className='size-4 animate-spin' />
+                            ) : (
+                              <Share2 className='size-4' />
+                            )}
+                            发布到共享库
+                          </Button>
+                        ) : (
+                          <Button
+                            type='button'
+                            size='sm'
+                            variant='outline'
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              onCopyProject(project.id)
+                            }}
+                            disabled={busy === `copy-project:${project.id}`}
+                          >
+                            {busy === `copy-project:${project.id}` ? (
+                              <Loader2 className='size-4 animate-spin' />
+                            ) : (
+                              <Copy className='size-4' />
+                            )}
+                            复制到我的工作台
+                          </Button>
+                        )}
+                      </div>
+                    </div>
                   )
                 })}
               </div>
@@ -2816,13 +3024,39 @@ function ProjectsTab({
             {currentProject ? (
               <div className='space-y-4'>
                 <div className='rounded-md border bg-muted/20 p-4'>
-                  <div className='text-sm text-muted-foreground'>当前项目</div>
+                  <div className='flex items-center justify-between gap-3'>
+                    <div className='text-sm text-muted-foreground'>当前项目</div>
+                    {currentProject.visibility !== 'shared' ? (
+                      <Button
+                        type='button'
+                        variant='outline'
+                        size='sm'
+                        onClick={onPublishProject}
+                        disabled={busy === 'publish-project'}
+                      >
+                        {busy === 'publish-project' ? (
+                          <Loader2 className='size-4 animate-spin' />
+                        ) : (
+                          <Share2 className='size-4' />
+                        )}
+                        发布到共享库
+                      </Button>
+                    ) : null}
+                  </div>
                   <div className='mt-1 text-xl font-semibold'>
                     {currentProject.name || currentProject.id}
                   </div>
                   <p className='mt-1 text-sm text-muted-foreground'>
                     {currentProject.organization || 'No organization'} / branch {currentBranch}
                   </p>
+                  <div className='mt-2 flex flex-wrap gap-2 text-xs'>
+                    <Badge variant={currentProject.visibility === 'shared' ? 'default' : 'secondary'}>
+                      {currentProject.visibility === 'shared' ? '共享库' : '个人工作台'}
+                    </Badge>
+                    <Badge variant='outline'>
+                      {currentProject.member_count || 1} members
+                    </Badge>
+                  </div>
                 </div>
                 <div className='grid gap-3 md:grid-cols-2 xl:grid-cols-3'>
                   {branches.map((item) => (
@@ -2861,9 +3095,9 @@ function ProjectsTab({
 
       <Card className='sysml-card self-start'>
         <CardHeader>
-          <CardTitle>新建项目</CardTitle>
+          <CardTitle>新建共享项目</CardTitle>
           <CardDescription>
-            创建后会自动拥有独立的 main 分支、提交记录和后续文档空间。
+            创建后会自动进入共享库，默认只有你自己，或加上指定成员可见。
           </CardDescription>
         </CardHeader>
         <CardContent className='space-y-4'>
@@ -2879,6 +3113,13 @@ function ProjectsTab({
               value={newProject.id}
               onChange={(event) => updateNewProject('id', event.target.value)}
               placeholder='留空则自动根据名称生成'
+            />
+          </Field>
+          <Field label='协作成员'>
+            <Input
+              value={newProject.members}
+              onChange={(event) => updateNewProject('members', event.target.value)}
+              placeholder='例如：teacher, reviewer'
             />
           </Field>
           <Field label='组织 / 团队'>
@@ -2910,7 +3151,7 @@ function ProjectsTab({
             ) : (
               <Plus className='size-4' />
             )}
-            创建并打开项目
+            创建共享项目
           </Button>
           <div className='rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground'>
             新项目是空模型。后续可以在 Model 里手动建元素，或到 MDK 页上传 JSON/XMI/MATLAB/Jupyter 文件导入。

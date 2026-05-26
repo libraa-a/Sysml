@@ -20,7 +20,7 @@ DATA_DIR = ROOT / "data"
 SQLITE_PATH = DATA_DIR / "store.sqlite3"
 LEGACY_JSON_PATH = DATA_DIR / "store.json"
 SAMPLE_PATH = DATA_DIR / "sample_project.json"
-SCHEMA_VERSION = "2.1"
+SCHEMA_VERSION = "2.2"
 
 
 class StoreError(Exception):
@@ -152,7 +152,10 @@ class ModelStore:
             project.setdefault("branches", {})
             project.setdefault("commits", [])
             project.setdefault("tags", [])
-            project.setdefault("roles", sample_project.get("roles", {}))
+            project.setdefault("roles", {})
+            project.setdefault("visibility", "shared")
+            project.setdefault("kind", "shared")
+            project.setdefault("members", [])
             for branch_name, sample_branch in sample_project.get("branches", {}).items():
                 branch = project["branches"].setdefault(branch_name, copy.deepcopy(sample_branch))
                 branch.setdefault("documents", [])
@@ -164,7 +167,9 @@ class ModelStore:
                         branch["elements"].setdefault(element_id, copy.deepcopy(sample_element))
 
         for project in data.get("projects", {}).values():
-            project.setdefault("roles", {"admin": ["teacher"], "author": ["engineer"], "reader": ["reviewer"]})
+            project.setdefault("visibility", "shared")
+            project.setdefault("kind", "shared")
+            project.setdefault("members", [])
             project.setdefault("commits", [])
             project.setdefault("tags", [])
             for branch in project.get("branches", {}).values():
@@ -277,6 +282,35 @@ class ModelStore:
             "created_at": row["created_at"],
         }
 
+    def list_users(self) -> list[dict[str, Any]]:
+        with self.connection() as connection:
+            rows = connection.execute(
+                "SELECT username, password_hash, role, display, created_at FROM users ORDER BY username"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def upsert_user(self, username: str, password_hash: str, role: str, display: str) -> dict[str, Any]:
+        created_at = utc_now()
+        with self.connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO users(username, password_hash, role, display, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(username) DO UPDATE SET
+                    password_hash = excluded.password_hash,
+                    role = excluded.role,
+                    display = excluded.display
+                """,
+                (username, password_hash, role, display, created_at),
+            )
+        return {
+            "username": username,
+            "password_hash": password_hash,
+            "role": role,
+            "display": display,
+            "created_at": created_at,
+        }
+
     def create_user(
         self,
         username: str,
@@ -302,14 +336,61 @@ class ModelStore:
             "created_at": created_at,
         }
 
-    def list_projects(self) -> list[dict[str, Any]]:
+    def _ensure_demo_users(self) -> None:
+        for username, seed in DEMO_USER_SEEDS.items():
+            if self.get_user(username) is not None:
+                self.ensure_user_sample_project(username)
+                continue
+            self.create_user(username, hash_password(seed["password"]), seed["role"], seed["display"])
+            self.ensure_user_sample_project(username)
+
+    def ensure_user_sample_project(self, username: str) -> dict[str, Any]:
+        owner = slugify(username)
+        project_id = f"{owner}-sample"
+        existing = self.data.setdefault("projects", {}).get(project_id)
+        if existing:
+            changed = False
+            if existing.get("owner") != username:
+                existing["owner"] = username
+                changed = True
+            if existing.get("roles"):
+                existing["roles"] = {}
+                changed = True
+            if changed:
+                self.save()
+            return copy.deepcopy(existing)
+
+        sample = self._sample_data()
+        sample_project = copy.deepcopy(next(iter(sample.get("projects", {}).values())))
+        now = utc_now()
+        sample_project["id"] = project_id
+        sample_project["name"] = f"{username} 的 SysML 示例项目"
+        sample_project["description"] = "这是系统为当前用户自动创建的独立示例数据。"
+        sample_project["organization"] = username
+        sample_project["owner"] = username
+        sample_project["roles"] = {}
+        sample_project["created_at"] = now
+        sample_project["updated_at"] = now
+        for branch in sample_project.get("branches", {}).values():
+            branch["created_at"] = now
+        for commit in sample_project.get("commits", []):
+            commit["author"] = username
+        self.data["projects"][project_id] = sample_project
+        self.save()
+        self.record_audit(project_id, "main", "create_user_sample", username, detail={"source": "sample_project"})
+        return copy.deepcopy(sample_project)
+
+    def list_projects(self, username: str | None = None) -> list[dict[str, Any]]:
+        projects = list(self.data.get("projects", {}).values())
+        if username:
+            projects = [project for project in projects if project.get("owner") == username]
         return sorted(
-            [project_summary(project) for project in self.data.get("projects", {}).values()],
+            [project_summary(project) for project in projects],
             key=lambda item: item["id"],
         )
 
     def create_project(self, payload: dict[str, Any], actor: str = "engineer") -> dict[str, Any]:
-        project_id = slugify(payload.get("id") or payload.get("name") or "project")
+        project_id = slugify(f"{actor}-{payload.get('id') or payload.get('name') or 'project'}")
         if project_id in self.data.setdefault("projects", {}):
             raise ConflictError(f"项目 {project_id} 已存在")
         now = utc_now()
@@ -320,7 +401,7 @@ class ModelStore:
             "organization": payload.get("organization", "课程设计小组"),
             "created_at": now,
             "updated_at": now,
-            "roles": normalized_roles(payload.get("roles")),
+            "roles": {},
             "branches": {
                 "main": {
                     "name": "main",
@@ -333,6 +414,8 @@ class ModelStore:
             "commits": [],
             "tags": [],
         }
+        project["owner"] = actor
+        project["roles"] = {}
         self.data["projects"][project_id] = project
         self._commit_in_memory(project, "main", "初始化项目", actor)
         self.save()
@@ -828,6 +911,7 @@ def project_summary(project: dict[str, Any]) -> dict[str, Any]:
         "name": project.get("name", ""),
         "description": project.get("description", ""),
         "organization": project.get("organization", ""),
+        "owner": project.get("owner", ""),
         "created_at": project.get("created_at", ""),
         "updated_at": project.get("updated_at", ""),
         "branches": branch_count,
@@ -849,20 +933,25 @@ def slugify(value: str) -> str:
 
 
 def normalized_roles(roles: Any) -> dict[str, list[str]]:
-    defaults = {"admin": ["teacher"], "author": ["engineer"], "reader": ["reviewer"]}
-    if not isinstance(roles, dict):
-        return defaults
-    normalized = {}
-    for role, default_users in defaults.items():
-        users = roles.get(role, default_users)
-        normalized[role] = [str(user) for user in users] if isinstance(users, list) else default_users
-    return normalized
+    del roles
+    return {}
 
 
 def enforce_role(method: str, role: str) -> None:
-    normalized = (role or "author").lower()
+    del method
+    if not role:
+        raise ForbiddenError("璇峰厛鐧诲綍")
+    return
+    normalized = (role or "user").lower()
     if method in {"GET", "HEAD", "OPTIONS"}:
-        if normalized not in {"admin", "author", "reader"}:
+        if normalized not in {"user"}:
             raise ForbiddenError("当前角色没有读取权限")
-    elif normalized not in {"admin", "author"}:
+    elif normalized not in {"user"}:
         raise ForbiddenError("当前角色没有写入权限")
+def normalized_roles(roles: Any) -> dict[str, list[str]]:
+    return {}
+
+
+def enforce_role(method: str, role: str) -> None:
+    if not role:
+        raise ForbiddenError("请先登录")

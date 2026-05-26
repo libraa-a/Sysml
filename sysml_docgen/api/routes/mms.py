@@ -20,8 +20,8 @@ async def metamodel(_: dict[str, str] = Depends(authorize_read), service: MmsSer
 
 
 @router.get("/api/projects", tags=["MMS"])
-async def list_projects(_: dict[str, str] = Depends(authorize_read), service: MmsService = Depends(get_mms_service)) -> dict[str, Any]:
-    return {"projects": service.list_projects()}
+async def list_projects(identity: dict[str, str] = Depends(authorize_read), service: MmsService = Depends(get_mms_service)) -> dict[str, Any]:
+    return {"projects": service.list_projects(identity["username"])}
 
 
 @router.post("/api/projects", tags=["MMS"])
@@ -31,6 +31,26 @@ async def create_project(
     service: MmsService = Depends(get_mms_service),
 ) -> dict[str, Any]:
     return {"project": service.create_project(payload, identity["username"])}
+
+
+@router.post("/api/projects/{project_id}/publish", tags=["MMS"])
+async def publish_project(
+    project_id: str,
+    payload: dict[str, Any] | None = None,
+    identity: dict[str, str] = Depends(authorize_write),
+    service: MmsService = Depends(get_mms_service),
+) -> dict[str, Any]:
+    return {"project": service.publish_project(project_id, payload or {}, identity["username"])}
+
+
+@router.post("/api/projects/{project_id}/copy", tags=["MMS"])
+async def copy_shared_project(
+    project_id: str,
+    payload: dict[str, Any] | None = None,
+    identity: dict[str, str] = Depends(authorize_write),
+    service: MmsService = Depends(get_mms_service),
+) -> dict[str, Any]:
+    return {"project": service.copy_shared_project(project_id, payload or {}, identity["username"])}
 
 
 @router.get("/api/projects/{project_id}", tags=["MMS"])

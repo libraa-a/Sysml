@@ -1,5 +1,7 @@
 """Repository package exports."""
 
+from .. import collaboration  # noqa: F401
+
 from .base import RepositoryStore
 from .factory import create_model_store
 from .mongo_store import MongoModelStore

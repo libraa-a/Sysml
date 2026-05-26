@@ -41,7 +41,7 @@ class SystemService:
                 "max_model_bytes": MAX_MODEL_BYTES,
                 "output_dir": str(OUTPUT_DIR),
                 "openapi": "/docs",
-                "access_control": "project roles: admin / author / reader",
+                "access_control": "private workspaces plus shared project memberships",
                 "frontend": frontend_mode,
                 "frontend_dir": str(frontend_dir) if frontend_dir else "",
                 "frontend_ready": frontend_dir is not None,
@@ -67,13 +67,19 @@ class SystemService:
         return metrics_payload()
 
     def login(self, username: str, password: str) -> dict[str, Any] | None:
-        return login(self.store, username, password)
+        identity = login(self.store, username, password)
+        if identity and hasattr(self.store, "ensure_user_workspace"):
+            self.store.ensure_user_workspace(identity["username"])
+        return identity
 
     def register(
         self,
         username: str,
         password: str,
-        role: str = "author",
+        role: str = "user",
         display: str | None = None,
     ) -> dict[str, Any] | None:
-        return register(self.store, username, password, role=role, display=display)
+        identity = register(self.store, username, password, role="user", display=display)
+        if identity and hasattr(self.store, "ensure_user_workspace"):
+            self.store.ensure_user_workspace(identity["username"])
+        return identity

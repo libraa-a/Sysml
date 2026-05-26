@@ -1,17 +1,30 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, type RenderResult } from 'vitest-browser-react'
 import { type Locator, userEvent } from 'vitest/browser'
-import { showSubmittedData } from '@/lib/show-submitted-data'
 import { OtpForm } from './otp-form'
 
 const navigate = vi.fn()
+const verifyPasswordResetCodeMock = vi.fn(() =>
+  Promise.resolve({ request_id: 'reset-1', username: 'engineer', verified: true })
+)
+const setNewPasswordMock = vi.fn(() =>
+  Promise.resolve({ username: 'engineer', reset: true })
+)
 
 vi.mock('@tanstack/react-router', async (orig) => {
   const actual = await orig<typeof import('@tanstack/react-router')>()
-  return { ...actual, useNavigate: () => navigate }
+  return {
+    ...actual,
+    useNavigate: () => navigate,
+    useSearch: () => ({ requestId: 'reset-1', email: 'engineer@example.com' }),
+  }
 })
 
-vi.mock('@/lib/show-submitted-data', () => ({ showSubmittedData: vi.fn() }))
+vi.mock('@/lib/sysml-api', async (orig) => ({
+  ...(await orig()),
+  verifyPasswordResetCode: verifyPasswordResetCodeMock,
+  setNewPassword: setNewPasswordMock,
+}))
 
 describe('OtpForm', () => {
   let screen: RenderResult
@@ -23,7 +36,7 @@ describe('OtpForm', () => {
 
     screen = await render(<OtpForm />)
     otpInput = screen.getByLabelText(/^One-Time Password$/i)
-    verifyButton = screen.getByRole('button', { name: /^Verify$/i })
+    verifyButton = screen.getByRole('button', { name: /^验证验证码$/i })
   })
 
   afterEach(() => {
@@ -41,15 +54,22 @@ describe('OtpForm', () => {
   })
 
   it('submits the OTP and navigates after timeout', async () => {
-    vi.useFakeTimers()
-
     await userEvent.fill(otpInput, '123456')
     await userEvent.click(verifyButton)
 
-    expect(showSubmittedData).toHaveBeenCalledOnce()
-    expect(showSubmittedData).toHaveBeenCalledWith({ otp: '123456' })
+    await vi.waitFor(() =>
+      expect(verifyPasswordResetCodeMock).toHaveBeenCalledWith('reset-1', '123456')
+    )
+    await expect.element(screen.getByRole('button', { name: /^更新密码$/i })).toBeInTheDocument()
 
-    await vi.advanceTimersByTimeAsync(1000)
-    expect(navigate).toHaveBeenCalledWith({ to: '/' })
+    await userEvent.fill(screen.getByLabelText(/^New Password$/i), 'newpass123')
+    await userEvent.click(screen.getByRole('button', { name: /^更新密码$/i }))
+
+    await vi.waitFor(() =>
+      expect(setNewPasswordMock).toHaveBeenCalledWith('reset-1', 'newpass123')
+    )
+    await vi.waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith({ to: '/sign-in', replace: true })
+    )
   })
 })

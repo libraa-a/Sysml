@@ -4,9 +4,9 @@ import { type Locator, userEvent } from 'vitest/browser'
 import { UserAuthForm } from './user-auth-form'
 
 const FORM_MESSAGES = {
-  usernameEmpty: 'Please enter your username.',
-  passwordEmpty: 'Please enter your password.',
-  passwordShort: 'Password must be at least 7 characters long.',
+  usernameEmpty: '请输入用户名。',
+  passwordEmpty: '请输入密码。',
+  passwordShort: '密码至少需要 7 位。',
 } as const
 
 const navigate = vi.fn()
@@ -50,7 +50,7 @@ vi.mock('@/lib/utils', async (orig) => ({
 }))
 
 describe('UserAuthForm', () => {
-  describe('Rendering without redirectTo', () => {
+  describe('Rendering', () => {
     let screen: RenderResult
     let emailInput: Locator
     let passwordInput: Locator
@@ -62,8 +62,8 @@ describe('UserAuthForm', () => {
       screen = await render(<UserAuthForm />)
       emailInput = screen.getByRole('textbox', { name: /^Username$/i })
       passwordInput = screen.getByLabelText(/^Password$/i)
-      signInButton = screen.getByRole('button', { name: /^Sign in$/i })
-      forgotPasswordLink = screen.getByText(/^Forgot password\?$/i)
+      signInButton = screen.getByRole('button', { name: /^登录$/i })
+      forgotPasswordLink = screen.getByText(/^忘记密码？$/i)
     })
 
     it('renders fields, submit button, and forgot password link', async () => {
@@ -108,26 +108,21 @@ describe('UserAuthForm', () => {
     })
   })
 
-  it('navigates to redirectTo when provided', async () => {
+  it('navigates to the workbench home on success', async () => {
     vi.clearAllMocks()
 
-    const { getByRole, getByLabelText } = await render(
-      <UserAuthForm redirectTo='/settings' />
-    )
+    const { getByRole, getByLabelText } = await render(<UserAuthForm />)
 
     await userEvent.fill(getByRole('textbox', { name: /Username/i }), 'testuser')
     await userEvent.fill(getByLabelText('Password'), '1234567')
 
-    await userEvent.click(getByRole('button', { name: /Sign in/i }))
+    await userEvent.click(getByRole('button', { name: /登录/i }))
 
     await vi.waitFor(() => expect(setUserMock).toHaveBeenCalledOnce())
     expect(setAccessTokenMock).toHaveBeenCalledOnce()
 
     await vi.waitFor(() =>
-      expect(navigate).toHaveBeenCalledWith({
-        to: '/settings',
-        replace: true,
-      })
+      expect(navigate).toHaveBeenCalledWith({ to: '/', replace: true })
     )
   })
 })

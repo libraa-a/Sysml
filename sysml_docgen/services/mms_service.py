@@ -13,6 +13,7 @@ from ..docgen import build_traceability
 from ..metamodel import build_diagram, metamodel_payload
 from ..repository_contract import RepositoryStore
 from ..repository import project_summary
+from ..collaboration import project_access_role
 from ..views import build_view_diagram, list_view_elements, view_payload
 
 
@@ -51,11 +52,9 @@ def project_id_from_path(path: str) -> str:
 
 def effective_project_role(project: dict[str, Any], identity: dict[str, str]) -> str:
     username = identity.get("username", "")
-    roles = project.get("roles", {})
-    for role in ("admin", "author", "reader"):
-        if username in roles.get(role, []):
-            return role
-    return "reader" if roles else identity.get("role", "reader")
+    if not project.get("owner"):
+        return identity.get("role", "user")
+    return project_access_role(project, username)
 
 
 class MmsService:
@@ -65,11 +64,19 @@ class MmsService:
     def metamodel(self) -> dict[str, Any]:
         return metamodel_payload()
 
-    def list_projects(self) -> list[dict[str, Any]]:
-        return self.store.list_projects()
+    def list_projects(self, username: str | None = None) -> list[dict[str, Any]]:
+        if hasattr(self.store, "ensure_user_workspace") and username:
+            self.store.ensure_user_workspace(username)
+        return self.store.list_projects(username)
 
     def create_project(self, payload: dict[str, Any], username: str) -> dict[str, Any]:
         return self.store.create_project(payload, username)
+
+    def publish_project(self, project_id: str, payload: dict[str, Any], username: str) -> dict[str, Any]:
+        return self.store.publish_project(project_id, payload, username)
+
+    def copy_shared_project(self, project_id: str, payload: dict[str, Any], username: str) -> dict[str, Any]:
+        return self.store.copy_shared_project(project_id, username, payload)
 
     def get_project_summary(self, project_id: str) -> dict[str, Any]:
         project = self.store.get_project(project_id)

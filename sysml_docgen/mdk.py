@@ -35,7 +35,7 @@ class MdkConfig:
     project: str = DEFAULT_PROJECT
     branch: str = DEFAULT_BRANCH
     username: str = "engineer"
-    role: str = "author"
+    role: str = "user"
     token: str = ""
     timeout: int = 20
 

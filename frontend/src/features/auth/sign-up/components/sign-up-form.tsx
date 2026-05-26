@@ -21,7 +21,14 @@ import { PasswordInput } from '@/components/password-input'
 
 const formSchema = z
   .object({
-    username: z.string().min(1, 'Please enter your username.'),
+    username: z
+      .string()
+      .trim()
+      .min(1, 'Please enter your username.')
+      .regex(
+        /^[A-Za-z0-9_-]{3,30}$/,
+        'Username must be 3 to 30 letters, digits, underscores, or hyphens.'
+      ),
     password: z
       .string()
       .min(1, 'Please enter your password.')

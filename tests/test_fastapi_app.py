@@ -21,6 +21,12 @@ class FastApiAppTest(unittest.TestCase):
         self.original_frontend_mode = getattr(app.state, "frontend_mode", None)
         app.state.store = ModelStore(Path(self.temp_dir.name) / "store.sqlite3")
         self.client = TestClient(app)
+        for username, password in (("engineer", "engineer123"), ("teacher", "teacher123")):
+            response = self.client.post(
+                "/api/auth/register",
+                json={"username": username, "password": password},
+            )
+            self.assertEqual(response.status_code, 200)
 
     def tearDown(self):
         self.client.close()
@@ -43,7 +49,30 @@ class FastApiAppTest(unittest.TestCase):
     def test_mms_projects_route_is_compatible(self):
         response = self.client.get("/api/projects")
         self.assertEqual(response.status_code, 200)
-        self.assertGreaterEqual(len(response.json()["projects"]), 1)
+        projects = response.json()["projects"]
+        self.assertTrue(any(project["id"] == "workspace-engineer" for project in projects))
+
+    def test_auth_login_returns_token_and_me_reads_identity(self):
+        response = self.client.post(
+            "/api/auth/login",
+            json={"username": "engineer", "password": "engineer123"},
+        )
+        self.assertEqual(response.status_code, 200)
+        identity = response.json()["identity"]
+        self.assertEqual(identity["username"], "engineer")
+        self.assertEqual(identity["role"], "user")
+        self.assertTrue(identity["token"])
+
+        me = self.client.get("/api/auth/me", headers={"Authorization": f"Bearer {identity['token']}"})
+        self.assertEqual(me.status_code, 200)
+        self.assertEqual(me.json()["identity"]["username"], "engineer")
+
+    def test_auth_login_rejects_bad_password(self):
+        response = self.client.post(
+            "/api/auth/login",
+            json={"username": "engineer", "password": "wrong-password"},
+        )
+        self.assertEqual(response.status_code, 401)
 
     def test_mdk_xmi_export_route_returns_xml(self):
         response = self.client.get("/api/projects/satellite-power/branches/main/export?format=xmi")
@@ -64,20 +93,91 @@ class FastApiAppTest(unittest.TestCase):
         self.assertTrue(pdf.content.startswith(b"%PDF-"))
 
     def test_project_roles_block_reader_writes(self):
+        self.skipTest("Role-based project access was replaced by per-user private samples.")
         response = self.client.post(
             "/api/projects/satellite-power/branches/main/elements",
             json={"id": "REQ-ROLE", "name": "权限需求", "type": "Requirement"},
-            headers={"X-User": "reviewer", "X-Role": "author"},
+            headers={"X-User": "reviewer", "X-Role": "user"},
         )
         self.assertEqual(response.status_code, 403)
 
     def test_project_roles_treat_unknown_user_as_reader(self):
+        self.skipTest("Role-based project access was replaced by per-user private samples.")
         response = self.client.post(
             "/api/projects/satellite-power/branches/main/elements",
             json={"id": "REQ-GHOST", "name": "未知用户需求", "type": "Requirement"},
-            headers={"X-User": "ghost", "X-Role": "author"},
+            headers={"X-User": "ghost", "X-Role": "user"},
         )
         self.assertEqual(response.status_code, 403)
+
+    def test_each_user_gets_empty_workspace(self):
+        engineer = self.client.get("/api/projects", headers={"X-User": "engineer", "X-Role": "user"})
+        teacher = self.client.get("/api/projects", headers={"X-User": "teacher", "X-Role": "user"})
+        self.assertEqual(engineer.status_code, 200)
+        self.assertEqual(teacher.status_code, 200)
+
+        engineer_projects = engineer.json()["projects"]
+        teacher_projects = teacher.json()["projects"]
+        engineer_ids = {project["id"] for project in engineer_projects}
+        teacher_ids = {project["id"] for project in teacher_projects}
+        self.assertIn("workspace-engineer", engineer_ids)
+        self.assertIn("workspace-teacher", teacher_ids)
+        self.assertNotIn("workspace-teacher", engineer_ids)
+        self.assertNotIn("workspace-engineer", teacher_ids)
+        self.assertTrue(all(project["elements"] == 0 for project in engineer_projects))
+        self.assertTrue(all(project["elements"] == 0 for project in teacher_projects))
+
+    def test_private_project_blocks_other_user_writes(self):
+        response = self.client.post(
+            "/api/projects/workspace-teacher/branches/main/elements",
+            json={"id": "REQ-PRIVATE", "name": "Private requirement", "type": "Requirement"},
+            headers={"X-User": "engineer", "X-Role": "user"},
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_publish_project_creates_shared_project(self):
+        created = self.client.post(
+            "/api/projects/workspace-engineer/branches/main/elements",
+            json={"id": "REQ-SHARED", "name": "Shared requirement", "type": "Requirement"},
+            headers={"X-User": "engineer", "X-Role": "user"},
+        )
+        self.assertEqual(created.status_code, 200)
+
+        published = self.client.post(
+            "/api/projects/workspace-engineer/publish",
+            json={"id": "engineering-shared", "name": "Engineering Shared", "members": "teacher"},
+            headers={"X-User": "engineer", "X-Role": "user"},
+        )
+        self.assertEqual(published.status_code, 200)
+        project = published.json()["project"]
+        self.assertEqual(project["visibility"], "shared")
+        self.assertEqual(project["owner"], "engineer")
+
+        teacher = self.client.get("/api/projects", headers={"X-User": "teacher", "X-Role": "user"})
+        teacher_ids = {item["id"] for item in teacher.json()["projects"]}
+        self.assertIn("engineering-shared", teacher_ids)
+
+    def test_copy_shared_project_creates_private_workspace_copy(self):
+        created = self.client.post(
+            "/api/projects",
+            json={"id": "team-shared", "name": "Team Shared", "members": "teacher"},
+            headers={"X-User": "engineer", "X-Role": "user"},
+        )
+        self.assertEqual(created.status_code, 200)
+
+        copied = self.client.post(
+            "/api/projects/team-shared/copy",
+            json={"id": "teacher-team-copy", "name": "Teacher Copy"},
+            headers={"X-User": "teacher", "X-Role": "user"},
+        )
+        self.assertEqual(copied.status_code, 200)
+        project = copied.json()["project"]
+        self.assertEqual(project["visibility"], "private")
+        self.assertEqual(project["owner"], "teacher")
+
+        teacher = self.client.get("/api/projects", headers={"X-User": "teacher", "X-Role": "user"})
+        teacher_ids = {item["id"] for item in teacher.json()["projects"]}
+        self.assertIn("teacher-team-copy", teacher_ids)
 
     def test_document_theory_named_routes_are_registered(self):
         paths = {route.path for route in app.routes}
@@ -107,7 +207,7 @@ class FastApiAppTest(unittest.TestCase):
                 },
                 "relations": [],
             },
-            headers={"X-User": "engineer", "X-Role": "author"},
+            headers={"X-User": "engineer", "X-Role": "user"},
         )
         self.assertEqual(created.status_code, 200)
 
@@ -166,7 +266,7 @@ class FastApiAppTest(unittest.TestCase):
                     "mapping_report": {"adapter": "cameo", "imported": 1},
                 },
             },
-            headers={"X-User": "engineer", "X-Role": "author"},
+            headers={"X-User": "engineer", "X-Role": "user"},
         )
         self.assertEqual(response.status_code, 200)
         payload = response.json()
@@ -187,7 +287,7 @@ class FastApiAppTest(unittest.TestCase):
                     ]
                 },
             },
-            headers={"X-User": "engineer", "X-Role": "author"},
+            headers={"X-User": "engineer", "X-Role": "user"},
         )
         self.assertEqual(created.status_code, 200)
         job = created.json()["job"]
@@ -201,7 +301,7 @@ class FastApiAppTest(unittest.TestCase):
         applied = self.client.post(
             f"/api/mdk/import-jobs/{job['id']}/apply",
             json={"commit": True, "message": "Apply import job"},
-            headers={"X-User": "engineer", "X-Role": "author"},
+            headers={"X-User": "engineer", "X-Role": "user"},
         )
         self.assertEqual(applied.status_code, 200)
         payload = applied.json()
@@ -234,7 +334,7 @@ class FastApiAppTest(unittest.TestCase):
                     ]
                 },
             },
-            headers={"X-User": "engineer", "X-Role": "author"},
+            headers={"X-User": "engineer", "X-Role": "user"},
         )
         self.assertEqual(created.status_code, 200)
         job_id = created.json()["job"]["id"]
@@ -242,7 +342,7 @@ class FastApiAppTest(unittest.TestCase):
         applied = self.client.post(
             f"/api/mdk/import-jobs/{job_id}/apply",
             json={"commit": False},
-            headers={"X-User": "engineer", "X-Role": "author"},
+            headers={"X-User": "engineer", "X-Role": "user"},
         )
         self.assertEqual(applied.status_code, 200)
         self.assertEqual(applied.json()["result"]["imported"], 2)

@@ -1,4 +1,4 @@
-export type SysmlRole = 'admin' | 'author' | 'reader'
+export type SysmlRole = 'user'
 
 export type Identity = {
   username: string
@@ -8,11 +8,28 @@ export type Identity = {
   exp?: number
 }
 
+export type ProjectMember = {
+  username: string
+  role: 'owner' | 'editor' | 'viewer'
+}
+
 export type Project = {
   id: string
   name: string
   description?: string
   organization?: string
+  owner?: string
+  visibility?: 'private' | 'shared'
+  kind?: 'workspace' | 'shared' | 'copy'
+  members?: ProjectMember[]
+  member_count?: number
+  source_project_id?: string
+  published_from?: string
+  published_by?: string
+  published_at?: string
+  copied_from?: string
+  copied_by?: string
+  copied_at?: string
   updated_at?: string
   created_at?: string
   branches?: number
@@ -21,6 +38,14 @@ export type Project = {
   views?: number
   commits?: number
   tags?: number
+}
+
+export type ProjectPayload = {
+  id?: string
+  name?: string
+  organization?: string
+  description?: string
+  members?: string | Array<{ username: string; role?: 'owner' | 'editor' | 'viewer' }>
 }
 
 export type Branch = {
@@ -362,6 +387,19 @@ export type MdkImportJob = {
   } | null
 }
 
+export type PasswordResetRequest = {
+  request_id: string
+  delivery: string
+  code: string
+  expires_at: number
+}
+
+export type PasswordResetVerify = {
+  request_id: string
+  username: string
+  verified: boolean
+}
+
 type ApiOptions = RequestInit & {
   identity?: Identity | null
   role?: SysmlRole
@@ -401,7 +439,7 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
   const headers = new Headers(options.headers)
   headers.set('Content-Type', headers.get('Content-Type') || 'application/json')
   headers.set('X-User', identity?.username || 'engineer')
-  headers.set('X-Role', identity?.role || options.role || 'author')
+  headers.set('X-Role', identity?.role || options.role || 'user')
 
   const token = identity?.token || window.localStorage.getItem(tokenStorageKey)
   if (token) headers.set('Authorization', `Bearer ${token}`)
@@ -441,7 +479,61 @@ export async function login(username: string, password: string) {
 export async function register(username: string, password: string) {
   return api<{ identity: Identity }>('/api/auth/register', {
     method: 'POST',
-    body: JSON.stringify({ username, password, role: 'author' }),
+    body: JSON.stringify({ username, password, role: 'user' }),
+    identity: null,
+  })
+}
+
+export async function publishProject(
+  projectId: string,
+  payload: ProjectPayload,
+  options: ApiOptions = {}
+) {
+  return api<{ project: Project }>(
+    `/api/projects/${encodeURIComponent(projectId)}/publish`,
+    {
+      ...options,
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }
+  )
+}
+
+export async function copySharedProject(
+  projectId: string,
+  payload: ProjectPayload = {},
+  options: ApiOptions = {}
+) {
+  return api<{ project: Project }>(
+    `/api/projects/${encodeURIComponent(projectId)}/copy`,
+    {
+      ...options,
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }
+  )
+}
+
+export async function requestPasswordReset(email: string) {
+  return api<PasswordResetRequest>('/api/auth/forgot-password', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+    identity: null,
+  })
+}
+
+export async function verifyPasswordResetCode(requestId: string, code: string) {
+  return api<PasswordResetVerify>('/api/auth/reset-password/verify', {
+    method: 'POST',
+    body: JSON.stringify({ request_id: requestId, code }),
+    identity: null,
+  })
+}
+
+export async function setNewPassword(requestId: string, password: string) {
+  return api<{ username: string; reset: boolean }>('/api/auth/reset-password', {
+    method: 'POST',
+    body: JSON.stringify({ request_id: requestId, password }),
     identity: null,
   })
 }

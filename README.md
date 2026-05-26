@@ -8,7 +8,7 @@
 - `VE` 视图编辑器：浏览器内查看和编辑 SysML 元素，展示需求图、结构图、行为图和追踪矩阵。
 - `MDK` 工具集成：提供可复用 Python 客户端、命令行入口、Cameo XMI、Jupyter Notebook 和 MATLAB 分析脚本适配器。
 - `DocGen` 文档生成：按模板生成 Markdown、HTML、PDF，并写入模型指纹、来源分支、来源提交和追踪矩阵。
-- 权限控制：演示用户分为 `admin`、`author`、`reader`，并结合项目 `roles` 做读写控制。
+- 账号隔离：演示账号统一为普通用户；每个用户登录后只看到并操作自己的独立示例项目。
 
 ## 快速运行
 
@@ -45,9 +45,11 @@ http://127.0.0.1:8000/docs
 
 | 用户 | 密码 | 角色 |
 | --- | --- | --- |
-| `teacher` | `teacher123` | admin |
-| `engineer` | `engineer123` | author |
-| `reviewer` | `reviewer123` | reader |
+| `teacher` | `teacher123` | 私有示例项目 |
+| `engineer` | `engineer123` | 私有示例项目 |
+| `reviewer` | `reviewer123` | 私有示例项目 |
+
+说明：系统已取消 `admin` / `author` / `reader` 三种演示角色。所有账号都是普通用户，登录后只看到并操作自己的独立示例数据。
 
 ## 典型流程
 
@@ -133,6 +135,57 @@ SYSML_PDF_ENGINE=pandoc|wkhtmltopdf|builtin-fallback
 SYSML_DOCX_REFERENCE=        # 可选，Word 参考模板 .docx
 ```
 
+### Windows 下验证 MongoDB 存储
+
+Docker Desktop 本地运行本项目不需要注册或登录 Docker 账号。若 `docker compose up --build`
+因为 Docker Hub 网络问题无法拉取 `python` 或 `node` 基础镜像，可以先只启动 MongoDB
+容器，再用本地 Python 后端连接 MongoDB 完成数据库验证：
+
+```powershell
+cd C:\Users\86189\Desktop\sysml2
+docker compose up -d mongo
+
+$env:SYSML_STORAGE="mongodb"
+$env:SYSML_MONGO_STRICT="true"
+$env:MONGO_URL="mongodb://127.0.0.1:27017"
+.\.venv-1\Scripts\python.exe server.py --host 127.0.0.1 --port 8000
+```
+
+然后访问：
+
+```text
+http://127.0.0.1:8000/api/ready
+```
+
+如果返回内容中包含以下字段，说明系统已经成功使用 MongoDB：
+
+```json
+{
+  "ready": true,
+  "storage": "mongodb"
+}
+```
+
+也可以用命令行直接验证仓储后端：
+
+```powershell
+$env:SYSML_STORAGE="mongodb"
+$env:SYSML_MONGO_STRICT="true"
+$env:MONGO_URL="mongodb://127.0.0.1:27017"
+.\.venv-1\Scripts\python.exe -c "from sysml_docgen.repository.factory import create_model_store; print(create_model_store().__class__.__name__)"
+```
+
+成功时应输出：
+
+```text
+MongoModelStore
+```
+
+如果 Docker Desktop 弹出 Ubuntu WSL integration 错误，可在弹窗中选择
+`Skip WSL distro integration`，然后进入 Docker Desktop 的
+`Settings -> Resources -> WSL Integration` 关闭 `Ubuntu` 集成。本项目只需要
+Docker Desktop 自身的 Linux 引擎，不依赖 Ubuntu 发行版集成。
+
 PDF 生成默认支持内置 fallback，不依赖系统安装 `wkhtmltopdf`。如果运行环境中存在 `wkhtmltopdf`，系统会自动优先使用它。
 
 ### 提升输出质量（推荐）
@@ -156,3 +209,20 @@ winget install wkhtmltopdf          # WebKit → PDF
 - **HTML**：语法高亮、智能排版、更丰富的 CSS（斑马纹表格、响应式、打印优化）
 - **PDF**：多引擎支持（WeasyPrint / LaTeX / wkhtmltopdf）
 - **Word (DOCX)**：新增格式，支持参考模板自定义样式（`SYSML_DOCX_REFERENCE`）
+## 协作关系与数据库设计
+
+当前这套项目的协作关系不是靠“三个演示角色”，而是靠“用户 - 工作台 - 共享项目成员”三层结构来表达。
+
+- `users`：保存登录账号、密码哈希、显示名、普通用户身份。
+- `projects`：保存项目本体，包含 `owner`、`visibility`、`kind`、`members`、`source_project_id`、`published_*`、`copied_*` 等字段。
+- `branches` / `elements` / `commits` / `documents`：都挂在项目之下，个人工作台和共享项目都遵循同一套模型结构。
+
+协作规则：
+
+1. 登录后默认只进入自己的空工作台，格式通常是 `workspace-用户名`。
+2. 工作台默认是空的，不再自动注入示例元素。
+3. 新建项目默认创建为共享项目，可以直接指定协作成员。
+4. “发布到共享库”会把个人工作台发布成共享项目。
+5. “从共享库复制到个人工作台”会生成一个私有副本。
+
+也就是说，共享关系由项目成员表来决定，不再靠硬编码的示例账号。

@@ -53,7 +53,7 @@ async def read_identity(
     headers = {
         "Authorization": authorization or "",
         "X-User": x_user or "engineer",
-        "X-Role": x_role or "author",
+        "X-Role": x_role or "user",
     }
     return identity_from_headers(headers)
 

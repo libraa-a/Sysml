@@ -1,4 +1,5 @@
 import { useLayout } from '@/context/layout-provider'
+import { loadIdentity } from '@/lib/sysml-api'
 import {
   Sidebar,
   SidebarContent,
@@ -14,6 +15,7 @@ import { TeamSwitcher } from './team-switcher'
 
 export function AppSidebar() {
   const { collapsible, variant } = useLayout()
+  const identity = loadIdentity()
   return (
     <Sidebar collapsible={collapsible} variant={variant}>
       <SidebarHeader>
@@ -29,7 +31,13 @@ export function AppSidebar() {
         ))}
       </SidebarContent>
       <SidebarFooter>
-        <NavUser user={sidebarData.user} />
+        <NavUser
+          user={{
+            name: identity?.display || identity?.username || 'Guest',
+            email: identity?.username || 'Guest',
+            avatar: '',
+          }}
+        />
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>

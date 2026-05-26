@@ -6,28 +6,75 @@ import base64
 import hashlib
 import hmac
 import json
+import os
+import re
 import time
 from typing import Any
 
 
-SECRET = "sysml-docgen-course-design-secret"
+SECRET = os.environ.get("SYSML_AUTH_SECRET", "sysml-docgen-course-design-secret")
+TOKEN_TTL_SECONDS = int(os.environ.get("SYSML_TOKEN_TTL_SECONDS", str(8 * 60 * 60)))
+USERNAME_RE = re.compile(r"^[A-Za-z0-9_-]{3,30}$")
 
-def _hash(password: str) -> str:
+
+def _legacy_hash(password: str) -> str:
     return hashlib.sha256(f"sysml-docgen:{password}".encode("utf-8")).hexdigest()
 
 
+def hash_password(password: str) -> str:
+    salt = os.urandom(16).hex()
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt), 120_000).hex()
+    return f"pbkdf2_sha256$120000${salt}${digest}"
+
+
+def verify_password(password: str, stored_hash: str) -> bool:
+    if stored_hash.startswith("pbkdf2_sha256$"):
+        try:
+            _, iterations, salt, digest = stored_hash.split("$", 3)
+            candidate = hashlib.pbkdf2_hmac(
+                "sha256",
+                password.encode("utf-8"),
+                bytes.fromhex(salt),
+                int(iterations),
+            ).hex()
+        except (ValueError, TypeError):
+            return False
+        return hmac.compare_digest(candidate, digest)
+    return hmac.compare_digest(stored_hash, _legacy_hash(password))
+
+
 DEMO_USERS = {
-    "teacher": {"password_hash": _hash("teacher123"), "role": "admin", "display": "Teacher"},
-    "engineer": {"password_hash": _hash("engineer123"), "role": "author", "display": "Engineer"},
-    "reviewer": {"password_hash": _hash("reviewer123"), "role": "reader", "display": "Reviewer"},
+    "teacher": {"password_hash": _legacy_hash("teacher123"), "role": "user", "display": "Teacher"},
+    "engineer": {"password_hash": _legacy_hash("engineer123"), "role": "user", "display": "Engineer"},
+    "reviewer": {"password_hash": _legacy_hash("reviewer123"), "role": "user", "display": "Reviewer"},
+}
+
+DEMO_USER_SEEDS = {
+    "teacher": {"password": "teacher123", "role": "user", "display": "Teacher"},
+    "engineer": {"password": "engineer123", "role": "user", "display": "Engineer"},
+    "reviewer": {"password": "reviewer123", "role": "user", "display": "Reviewer"},
 }
 
 
-VALID_ROLES = {"admin", "author", "reader"}
+VALID_ROLES = {"user"}
 
 
 def _normalize_role(role: str | None) -> str:
-    return (role or "author").strip().lower()
+    return "user"
+
+
+def _normalize_username(username: str | None) -> str:
+    return (username or "").strip()
+
+
+def _validate_username(username: str) -> None:
+    if not USERNAME_RE.fullmatch(username):
+        raise ValueError("Username must be 3 to 30 letters, digits, underscores, or hyphens")
+
+
+def _validate_password(password: str) -> None:
+    if len(password) < 7:
+        raise ValueError("Password must be at least 7 characters long")
 
 
 def login(store: Any | None = None, username: str | None = None, password: str | None = None) -> dict[str, Any] | None:
@@ -37,14 +84,15 @@ def login(store: Any | None = None, username: str | None = None, password: str |
         store = None
     if username is None or password is None:
         raise ValueError("Username and password are required")
+    username = _normalize_username(username)
     user = get_user(store, username)
-    if not user or not hmac.compare_digest(user["password_hash"], _hash(password)):
+    if not user or not verify_password(password, user["password_hash"]):
         return None
     identity = {
         "username": username,
         "role": user["role"],
         "display": user["display"],
-        "exp": int(time.time()) + 8 * 60 * 60,
+        "exp": int(time.time()) + TOKEN_TTL_SECONDS,
     }
     identity["token"] = issue_token(identity)
     return identity
@@ -54,17 +102,20 @@ def register(
     store: Any,
     username: str,
     password: str,
-    role: str = "author",
+    role: str = "user",
     display: str | None = None,
 ) -> dict[str, Any] | None:
+    username = _normalize_username(username)
     normalized_role = _normalize_role(role)
     if normalized_role not in VALID_ROLES:
         raise ValueError("Invalid role")
     if not username or not password:
         raise ValueError("Username and password are required")
+    _validate_username(username)
+    _validate_password(password)
     if get_user(store, username) is not None:
         raise ValueError(f"Username '{username}' already exists")
-    password_hash = _hash(password)
+    password_hash = hash_password(password)
     display = (display or username).strip() or username
     if not hasattr(store, "create_user"):
         raise RuntimeError("User registration is not supported by the current store")
@@ -73,7 +124,7 @@ def register(
         "username": username,
         "role": normalized_role,
         "display": display,
-        "exp": int(time.time()) + 8 * 60 * 60,
+        "exp": int(time.time()) + TOKEN_TTL_SECONDS,
     }
     identity["token"] = issue_token(identity)
     return identity
@@ -124,5 +175,5 @@ def identity_from_headers(headers: Any) -> dict[str, str]:
                 "display": str(identity.get("display", identity["username"])),
             }
     username = headers.get("X-User", "engineer")
-    role = headers.get("X-Role", "author")
+    role = headers.get("X-Role", "user")
     return {"username": username, "role": role, "display": username}
