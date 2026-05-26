@@ -1,19 +1,14 @@
 import {
   Archive,
-  BookOpenText,
   Boxes,
   Braces,
-  ChartNoAxesCombined,
   Eye,
   FileText,
   GitBranch,
   LayoutDashboard,
   MessageCircle,
   Network,
-  NotebookTabs,
-  ShieldCheck,
   Wrench,
-  Waypoints,
   Workflow,
 } from 'lucide-react'
 import { type SidebarData } from '../types'
@@ -26,24 +21,24 @@ export const sidebarData: SidebarData = {
   },
   teams: [
     {
-      name: 'SysML DocGen',
+      name: 'MBSE Workspace',
       logo: Braces,
-      plan: 'Projects / Views / Docs',
+      plan: 'Projects / Models / Docs',
     },
     {
-      name: 'Satellite Power',
+      name: 'Project Workspace',
       logo: Boxes,
-      plan: 'Sample project',
+      plan: 'Model / Trace / Version',
     },
     {
-      name: 'FastAPI Backend',
+      name: 'External Tools',
       logo: Archive,
-      plan: 'Local API',
+      plan: 'Cameo / XMI / MDK',
     },
   ],
   navGroups: [
     {
-      title: 'Workbench',
+      title: 'Portfolio',
       items: [
         {
           title: 'Overview',
@@ -55,6 +50,16 @@ export const sidebarData: SidebarData = {
           url: '/#projects',
           icon: Boxes,
         },
+        {
+          title: 'Workspace',
+          url: '/#workspace',
+          icon: Braces,
+        },
+      ],
+    },
+    {
+      title: 'Project Workspace',
+      items: [
         {
           title: 'Model',
           url: '/#model',
@@ -94,50 +99,6 @@ export const sidebarData: SidebarData = {
           title: 'Assistant',
           url: '/#assistant',
           icon: MessageCircle,
-        },
-      ],
-    },
-    {
-      title: 'Reference',
-      items: [
-        {
-          title: 'API & Docs',
-          icon: ShieldCheck,
-          items: [
-            {
-              title: 'OpenAPI',
-              url: '/docs',
-              icon: NotebookTabs,
-            },
-            {
-              title: 'API Guide',
-              url: '/api.md',
-              icon: BookOpenText,
-            },
-            {
-              title: 'MDK Guide',
-              url: '/mdk.md',
-              icon: Waypoints,
-            },
-          ],
-        },
-        {
-          title: 'Template Pages',
-          icon: ChartNoAxesCombined,
-          items: [
-            {
-              title: 'Tasks',
-              url: '/tasks',
-            },
-            {
-              title: 'Users',
-              url: '/users',
-            },
-            {
-              title: 'Apps',
-              url: '/apps',
-            },
-          ],
         },
       ],
     },

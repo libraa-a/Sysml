@@ -37,6 +37,7 @@ import {
 import {
   AlertCircle,
   Archive,
+  ArrowRight,
   Boxes,
   Braces,
   CheckCircle2,
@@ -53,6 +54,7 @@ import {
   LogIn,
   LogOut,
   MessageCircle,
+  MoreVertical,
   Network,
   Plus,
   RefreshCw,
@@ -60,7 +62,6 @@ import {
   Save,
   Search,
   Send,
-  ShieldCheck,
   Sparkles,
   Trash2,
   Upload,
@@ -123,13 +124,28 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Sheet,
+  SheetClose,
   SheetContent,
   SheetDescription,
+  SheetFooter,
   SheetHeader,
   SheetTitle,
   SheetTrigger,
@@ -351,9 +367,41 @@ const viewpointPresets = [
   },
 ]
 
-const workbenchTabs = ['overview', 'projects', 'model', 'views', 'diagram', 'trace', 'version', 'docgen', 'mdk', 'assistant'] as const
+const workbenchTabs = ['overview', 'workspace', 'projects', 'model', 'views', 'diagram', 'trace', 'version', 'docgen', 'mdk', 'assistant'] as const
 
 type WorkbenchTab = (typeof workbenchTabs)[number]
+
+const primaryWorkbenchNav = [
+  { value: 'overview', label: '总览', icon: LayoutDashboard },
+  { value: 'projects', label: '项目管理', icon: Boxes },
+] satisfies Array<{ value: WorkbenchTab; label: string; icon: typeof LayoutDashboard }>
+
+const secondaryWorkbenchNav = [
+  { value: 'model', label: '模型', icon: Boxes },
+  { value: 'views', label: '视图', icon: Archive },
+  { value: 'diagram', label: '图谱', icon: Network },
+  { value: 'trace', label: '追踪', icon: Workflow },
+  { value: 'version', label: '版本', icon: GitBranch },
+  { value: 'docgen', label: '文档', icon: FileText },
+  { value: 'mdk', label: '外部导入', icon: Wrench },
+  { value: 'assistant', label: '助手', icon: MessageCircle },
+] satisfies Array<{ value: WorkbenchTab; label: string; icon: typeof LayoutDashboard }>
+
+const workspaceNavDetails: Partial<Record<WorkbenchTab, string>> = {
+  projects: '管理多个项目、切换当前项目和分支入口。',
+  model: '创建、筛选和编辑 SysML 模型元素。',
+  views: '配置 View / Viewpoint，收敛图谱和文档范围。',
+  diagram: '查看模型关系网络，理解元素之间的连接。',
+  trace: '检查需求、满足、验证和约束的闭环情况。',
+  version: '管理提交、Diff、回滚、标签和分支合并。',
+  docgen: '按模型或 View 生成 Markdown、HTML、PDF 文档。',
+  mdk: '导入 Cameo、XMI、JSON、Jupyter、MATLAB 等外部模型。',
+  assistant: '用 AI 辅助审查模型、追踪关系和文档质量。',
+}
+
+const moduleWorkbenchTabs = new Set<WorkbenchTab>(
+  secondaryWorkbenchNav.map((item) => item.value)
+)
 
 type SaveElementInput = {
   element: SysmlElement
@@ -475,9 +523,6 @@ export function SysmlWorkbench() {
     allElements.find((item) => item.id === selectedId)
   const viewElements = allElements.filter((item) => item.type === 'View')
   const viewpointElements = allElements.filter((item) => item.type === 'Viewpoint')
-  const elementCounts = useMemo(() => countBy(elements, (item) => item.type), [
-    elements,
-  ])
   const projectTotals = useMemo(
     () => ({
       projects: projects.length,
@@ -1559,48 +1604,20 @@ export function SysmlWorkbench() {
     )
   }
 
-  const stats = [
-    {
-      label: 'Elements',
-      value: elements.length,
-      detail: `${Object.keys(elementCounts).length} SysML types`,
-      icon: Boxes,
-    },
-    {
-      label: 'Requirements',
-      value: elementCounts.Requirement || 0,
-      detail: 'Requirement',
-      icon: ShieldCheck,
-    },
-    {
-      label: 'Blocks',
-      value: elementCounts.Block || 0,
-      detail: 'Block',
-      icon: Archive,
-    },
-    {
-      label: 'Validation',
-      value:
-        (validation?.summary.errors || 0) + (validation?.summary.warnings || 0),
-      detail: `${validation?.summary.errors || 0} errors / ${validation?.summary.warnings || 0} warnings`,
-      icon: AlertCircle,
-    },
-  ]
-
   return (
     <>
       <Header fixed className='border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/70'>
         <div className='me-auto min-w-0'>
           <div className='flex items-center gap-2'>
             <span className='truncate text-sm font-semibold'>
-              SysML DocGen
+              MBSE Workspace
             </span>
             <Badge variant='outline' className='hidden sm:inline-flex'>
-              FastAPI + Shadcn Admin
+              Model Management
             </Badge>
           </div>
           <p className='mt-0.5 hidden text-xs text-muted-foreground sm:block'>
-            MMS / VE / MDK / DocGen integrated workbench
+            Projects, models, views and documents in one traceable workspace
           </p>
         </div>
         <IdentityDialog
@@ -1627,179 +1644,101 @@ export function SysmlWorkbench() {
           </div>
         ) : (
           <div className='sysml-shell space-y-5'>
-            <section className='space-y-4 pt-2'>
-              <div className='sysml-hero rounded-lg p-4 md:p-5'>
-                <div className='flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between'>
+            {activeTab === 'overview' ? (
+              <section className='pt-2'>
+                <div className='sysml-hero overflow-hidden rounded-[2rem] p-0'>
+                <div className='grid gap-6 p-5 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-center lg:p-6'>
                   <div className='min-w-0'>
-                    <div className='sysml-eyebrow mb-2 text-xs font-semibold uppercase'>
-                      {activeTab === 'overview'
-                        ? 'MBSE Portfolio Workspace'
-                        : 'MBSE Model Management System'}
+                    <div className='sysml-eyebrow mb-3 text-xs font-semibold uppercase'>
+                      MBSE Portfolio Workspace
                     </div>
-                    <div className='flex flex-wrap items-center gap-2'>
-                      <h1 className='truncate text-2xl font-semibold tracking-tight md:text-3xl'>
-                        {activeTab === 'overview'
-                          ? 'MBSE 项目统筹中心'
-                          : project?.name || 'SysML Project'}
+                    <div className='space-y-3'>
+                      <h1 className='max-w-4xl text-3xl font-semibold tracking-tight md:text-4xl'>
+                        MBSE 项目统筹中心
                       </h1>
-                      <Badge variant='outline' className='rounded-sm'>
-                        {activeTab === 'overview'
-                          ? `${projects.length} projects`
-                          : `branch / ${branch}`}
-                      </Badge>
-                      <Badge variant='secondary' className='rounded-sm'>
-                        {activeTab === 'overview'
-                          ? `${projectTotals.elements} elements`
-                          : branches.find((item) => item.name === branch)?.head ||
-                            'working'}
-                      </Badge>
+                      <div className='flex flex-wrap items-center gap-2 text-sm text-muted-foreground'>
+                        <Badge variant='outline' className='rounded-full bg-background/70'>
+                          {projects.length} projects
+                        </Badge>
+                        <Badge variant='secondary' className='rounded-full'>
+                          {projectTotals.elements} elements
+                        </Badge>
+                        <span className='hidden sm:inline'>
+                          看全局状态和风险，具体操作进入工作区。
+                        </span>
+                      </div>
                     </div>
-                    <p className='mt-2 max-w-3xl text-sm text-muted-foreground'>
-                      {activeTab === 'overview'
-                        ? '先看所有项目、风险和下一步动作，再进入具体模型工作区。'
-                        : project?.organization || 'Current project'}
-                      {activeTab !== 'overview' && (
-                        <>
-                          <span className='mx-2 text-border'>/</span>
-                          MMS, VE, MDK and DocGen are kept in one traceable workspace.
-                        </>
-                      )}
-                    </p>
                   </div>
-                  <div className='grid gap-2 md:grid-cols-[minmax(220px,1fr)_160px_auto] xl:min-w-[740px]'>
-                    <Select value={projectId} onValueChange={selectProject}>
-                      <SelectTrigger className='w-full'>
-                        <SelectValue placeholder='Select project' />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {projects.map((item) => (
-                          <SelectItem key={item.id} value={item.id}>
-                            {item.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Select value={branch} onValueChange={setBranch}>
-                      <SelectTrigger className='w-full'>
-                        <SelectValue placeholder='Select branch' />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {branches.map((item) => (
-                          <SelectItem key={item.name} value={item.name}>
-                            {item.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <div className='flex flex-wrap gap-2 md:flex-nowrap'>
-                      <Button
-                        variant='outline'
-                        onClick={() => exportModel('json')}
-                        disabled={busy === 'export-json'}
-                      >
-                        <Download className='size-4' />
-                        JSON
-                      </Button>
-                      <Button
-                        variant='outline'
-                        onClick={() => exportModel('xmi')}
-                        disabled={busy === 'export-xmi'}
-                      >
-                        <Code2 className='size-4' />
-                        XMI
-                      </Button>
-                      <Button onClick={commitBranch} disabled={busy === 'commit'}>
-                        <GitCommitHorizontal className='size-4' />
-                        Commit
-                      </Button>
-                    </div>
+
+                  <div className='rounded-3xl bg-background/70 p-3 shadow-sm ring-1 ring-border/40'>
+                      <div className='space-y-3 p-2'>
+                        <div className='text-xs font-medium uppercase text-muted-foreground'>
+                          当前项目
+                        </div>
+                        <div className='truncate text-lg font-semibold'>
+                          {project?.name || '尚未选择项目'}
+                        </div>
+                        <div className='grid grid-cols-3 gap-2'>
+                          <HeroMiniMetric label='分支' value={projectTotals.branches} />
+                          <HeroMiniMetric label='视图' value={projectTotals.views} />
+                          <HeroMiniMetric label='文档' value={projectTotals.documents} />
+                        </div>
+                      </div>
                   </div>
                 </div>
-              </div>
-
-              <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>
-                {stats.map((item) => (
-                  <Card key={item.label} className='sysml-card sysml-metric'>
-                    <CardHeader className='flex flex-row items-center justify-between space-y-0 pb-2'>
-                      <CardTitle className='text-sm font-medium'>
-                        {item.label}
-                      </CardTitle>
-                      <item.icon className='size-4 text-muted-foreground' />
-                    </CardHeader>
-                    <CardContent>
-                      <div className='text-2xl font-bold'>{item.value}</div>
-                      <p className='mt-1 text-xs text-muted-foreground'>
-                        {item.detail}
-                      </p>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            </section>
+                </div>
+              </section>
+            ) : null}
 
             <Tabs
               value={activeTab}
               onValueChange={(value) => selectTab(value as WorkbenchTab)}
               className='space-y-4'
             >
-              <div className='sticky top-16 z-20 overflow-x-auto rounded-lg py-2 backdrop-blur'>
+              <div className='sticky top-16 z-20 flex flex-wrap items-center gap-2 rounded-xl py-2 backdrop-blur'>
                 <TabsList className='sysml-tabs h-11 p-1'>
-                  <TabsTrigger value='overview'>
-                    <LayoutDashboard className='size-4' />
-                    Overview
-                  </TabsTrigger>
-                  <TabsTrigger value='projects'>
-                    <Boxes className='size-4' />
-                    Projects
-                  </TabsTrigger>
-                  <TabsTrigger value='model'>
-                    <Boxes className='size-4' />
-                    Model
-                  </TabsTrigger>
-                  <TabsTrigger value='views'>
-                    <Archive className='size-4' />
-                    Views
-                  </TabsTrigger>
-                  <TabsTrigger value='diagram'>
-                    <Network className='size-4' />
-                    Graph
-                  </TabsTrigger>
-                  <TabsTrigger value='trace'>
-                    <Workflow className='size-4' />
-                    Trace
-                  </TabsTrigger>
-                  <TabsTrigger value='version'>
-                    <GitBranch className='size-4' />
-                    Versions
-                  </TabsTrigger>
-                  <TabsTrigger value='docgen'>
-                    <FileText className='size-4' />
-                    Docs
-                  </TabsTrigger>
-                  <TabsTrigger value='mdk'>
-                    <Wrench className='size-4' />
-                    MDK
-                  </TabsTrigger>
-                  <TabsTrigger value='assistant'>
-                    <MessageCircle className='size-4' />
-                    Assistant
-                  </TabsTrigger>
+                  {primaryWorkbenchNav.map((item) => {
+                    const Icon = item.icon
+                    return (
+                      <TabsTrigger key={item.value} value={item.value}>
+                        <Icon className='size-4' />
+                        {item.label}
+                      </TabsTrigger>
+                    )
+                  })}
                 </TabsList>
               </div>
+
+              {activeTab === 'workspace' || moduleWorkbenchTabs.has(activeTab) ? (
+                <ProjectContextBar
+                  activeTab={activeTab}
+                  project={project || null}
+                  branch={branch}
+                  branches={branches}
+                  onSelectBranch={setBranch}
+                  onBackToWorkspace={() => selectTab('workspace')}
+                />
+              ) : null}
 
               <TabsContent value='overview'>
                 <OverviewTab
                   projects={projects}
                   currentProject={project}
-                  currentBranch={branch}
                   totals={projectTotals}
                   validation={validation}
                   onSelectProject={selectProject}
-                  onOpenProject={() => selectTab('model')}
-                  onManageProjects={() => selectTab('projects')}
-                  onGoToMdk={() => selectTab('mdk')}
-                  onGoToViews={() => selectTab('views')}
-                  onGoToDocs={() => selectTab('docgen')}
+                  onOpenWorkspace={() => selectTab('workspace')}
+                />
+              </TabsContent>
+
+              <TabsContent value='workspace'>
+                <WorkspaceTab
+                  project={project || null}
+                  branch={branch}
+                  totals={projectTotals}
+                  validation={validation}
+                  currentTab={activeTab}
+                  onSelect={selectTab}
                 />
               </TabsContent>
 
@@ -1807,13 +1746,11 @@ export function SysmlWorkbench() {
                 <ProjectsTab
                   projects={projects}
                   currentProjectId={projectId}
-                  branches={branches}
-                  currentBranch={branch}
                   newProject={newProject}
                   setNewProject={setNewProject}
                   onSelectProject={selectProject}
+                  onOpenWorkspace={() => selectTab('workspace')}
                   onCreateProject={createProject}
-                  onOpenWorkbench={() => selectTab('model')}
                   busy={busy}
                 />
               </TabsContent>
@@ -1902,6 +1839,9 @@ export function SysmlWorkbench() {
 
               <TabsContent value='version'>
                 <VersionTab
+                  currentBranch={branch}
+                  elements={elements}
+                  validation={validation}
                   branches={branches}
                   commits={commits}
                   tags={tags}
@@ -1923,6 +1863,8 @@ export function SysmlWorkbench() {
                   forceMerge={forceMerge}
                   setForceMerge={setForceMerge}
                   onRefresh={loadVersionData}
+                  onExport={exportModel}
+                  onCommit={commitBranch}
                   onDiff={runDiff}
                   onAiImpact={runAiVersionImpact}
                   onRollback={rollback}
@@ -2023,6 +1965,229 @@ type ModelTabProps = {
   onAiReview: () => void
   onAiClosureSuggestions: () => void
   busy: string
+}
+
+function WorkspaceTab({
+  project,
+  branch,
+  totals,
+  validation,
+  currentTab,
+  onSelect,
+}: {
+  project: Project | null
+  branch: string
+  totals: {
+    projects: number
+    branches: number
+    elements: number
+    views: number
+    documents: number
+    commits: number
+  }
+  validation: ValidationPayload | null
+  currentTab: WorkbenchTab
+  onSelect: (tab: WorkbenchTab) => void
+}) {
+  const issueCount =
+    (validation?.summary.errors || 0) + (validation?.summary.warnings || 0)
+
+  return (
+    <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]'>
+      <section className='sysml-card space-y-5 p-5'>
+        <div className='flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between'>
+          <div>
+            <p className='text-xs font-semibold uppercase tracking-wide text-primary'>
+              MBSE Workspace
+            </p>
+            <h2 className='text-2xl font-semibold'>选择你要进入的工作区</h2>
+            <p className='mt-1 text-sm text-muted-foreground'>
+              这里是具体操作大厅：项目、模型、视图、图谱、追踪、版本、文档和工具都从这里进入。
+            </p>
+          </div>
+          <Badge variant='secondary' className='w-fit rounded-full'>
+            {project?.name || '未选择项目'} / {branch || 'main'}
+          </Badge>
+        </div>
+
+        <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-3'>
+          {secondaryWorkbenchNav.map((item) => {
+            const Icon = item.icon
+            const selected = currentTab === item.value
+
+            return (
+              <button
+                key={item.value}
+                type='button'
+                onClick={() => onSelect(item.value)}
+                className={cn(
+                  'group rounded-3xl bg-muted/35 p-4 text-left transition-all hover:-translate-y-0.5 hover:bg-muted/60 hover:shadow-sm',
+                  selected && 'bg-primary text-primary-foreground shadow-sm'
+                )}
+              >
+                <div className='flex items-start justify-between gap-3'>
+                  <span
+                    className={cn(
+                      'flex size-11 items-center justify-center rounded-2xl bg-background text-muted-foreground shadow-sm',
+                      selected && 'bg-primary-foreground/15 text-primary-foreground'
+                    )}
+                  >
+                    <Icon className='size-5' />
+                  </span>
+                  {selected ? (
+                    <Badge variant='secondary' className='rounded-full'>
+                      当前
+                    </Badge>
+                  ) : null}
+                </div>
+                <div className='mt-4 text-base font-semibold'>{item.label}</div>
+                <p
+                  className={cn(
+                    'mt-1 line-clamp-2 text-sm text-muted-foreground',
+                    selected && 'text-primary-foreground/75'
+                  )}
+                >
+                  {workspaceNavDetails[item.value]}
+                </p>
+                <div
+                  className={cn(
+                    'mt-4 text-xs font-medium text-primary opacity-0 transition-opacity group-hover:opacity-100',
+                    selected && 'text-primary-foreground opacity-100'
+                  )}
+                >
+                  进入工作区
+                </div>
+              </button>
+            )
+          })}
+        </div>
+      </section>
+
+      <aside className='space-y-4'>
+        <section className='sysml-card p-5'>
+          <p className='text-xs font-medium uppercase text-muted-foreground'>
+            当前上下文
+          </p>
+          <h3 className='mt-2 text-lg font-semibold'>
+            {project?.name || '暂无项目'}
+          </h3>
+          <p className='mt-1 text-sm text-muted-foreground'>
+            {project?.organization || '选择或创建项目后，模型、视图、文档和版本都会按项目隔离。'}
+          </p>
+          <div className='mt-4 grid grid-cols-2 gap-2 text-sm'>
+            <WorkspaceMetric label='元素' value={totals.elements} />
+            <WorkspaceMetric label='视图' value={totals.views} />
+            <WorkspaceMetric label='文档' value={totals.documents} />
+            <WorkspaceMetric label='问题' value={issueCount} />
+          </div>
+        </section>
+
+        <section className='rounded-3xl bg-muted/35 p-5'>
+          <p className='text-sm font-semibold'>建议下一步</p>
+          <div className='mt-3 space-y-3 text-sm text-muted-foreground'>
+            <p>如果是新项目，先进入“模型”创建基础元素，或进入“外部导入”上传已有模型。</p>
+            <p>如果要给别人看结果，先进入“视图”圈定范围，再到“文档”生成输出。</p>
+            <p>如果准备冻结状态，进入“版本”提交并创建标签基线。</p>
+          </div>
+        </section>
+      </aside>
+    </div>
+  )
+}
+
+function WorkspaceMetric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className='rounded-2xl bg-background/75 p-3'>
+      <div className='text-lg font-semibold'>{value}</div>
+      <div className='text-xs text-muted-foreground'>{label}</div>
+    </div>
+  )
+}
+
+function HeroMiniMetric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className='rounded-2xl bg-muted/35 px-3 py-2'>
+      <div className='text-lg font-semibold'>{value}</div>
+      <div className='text-xs text-muted-foreground'>{label}</div>
+    </div>
+  )
+}
+
+function ProjectContextBar({
+  activeTab,
+  project,
+  branch,
+  branches,
+  onSelectBranch,
+  onBackToWorkspace,
+}: {
+  activeTab: WorkbenchTab
+  project: Project | null
+  branch: string
+  branches: Branch[]
+  onSelectBranch: (branch: string) => void
+  onBackToWorkspace: () => void
+}) {
+  const activeModule = secondaryWorkbenchNav.find((item) => item.value === activeTab)
+  const Icon = activeModule?.icon || Boxes
+  const isModulePage = moduleWorkbenchTabs.has(activeTab)
+
+  return (
+    <div className='flex flex-col gap-3 rounded-3xl bg-muted/25 p-3 sm:flex-row sm:items-center sm:justify-between'>
+      <div className='min-w-0'>
+        <div className='flex flex-wrap items-center gap-2 text-xs text-muted-foreground'>
+          <button
+            type='button'
+            className='font-medium text-foreground transition-colors hover:text-primary'
+            onClick={onBackToWorkspace}
+          >
+            工作区
+          </button>
+          {isModulePage ? (
+            <>
+              <span>/</span>
+              <span className='inline-flex items-center gap-1 font-medium text-foreground'>
+                <Icon className='size-3.5' />
+                {activeModule?.label}
+              </span>
+            </>
+          ) : null}
+        </div>
+        <div className='mt-1 truncate text-sm font-semibold'>
+          {project?.name || '尚未选择项目'}
+        </div>
+        <p className='truncate text-xs text-muted-foreground'>
+          {project?.organization || '项目上下文'} / branch {branch || 'main'}
+        </p>
+      </div>
+
+      <div className='flex flex-wrap items-center gap-2'>
+        {isModulePage ? (
+          <Button
+            variant='outline'
+            size='sm'
+            className='rounded-xl bg-background'
+            onClick={onBackToWorkspace}
+          >
+            <LogIn className='size-4 rotate-180' />
+            返回工作区
+          </Button>
+        ) : null}
+        <Select value={branch} onValueChange={onSelectBranch}>
+          <SelectTrigger className='h-9 w-[150px] rounded-xl bg-background'>
+            <SelectValue placeholder='选择分支' />
+          </SelectTrigger>
+          <SelectContent>
+            {branches.map((item) => (
+              <SelectItem key={item.name} value={item.name}>
+                {item.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+    </div>
+  )
 }
 
 function IdentityDialog({
@@ -2143,200 +2308,251 @@ function IdentityDialog({
 
 function ModelTab(props: ModelTabProps) {
   const typeCounts = countBy(props.elements, (item) => item.type)
+  const selectedRelations = parseJsonSafe<Relation[]>(
+    props.relationsText,
+    props.form.relations || []
+  )
+  const selectedAttributes = parseJsonSafe<Record<string, unknown>>(
+    props.attributesText,
+    props.form.attributes || {}
+  )
+  const selectedIssues =
+    props.validation?.issues.filter(
+      (issue) => issue.element_id === props.form.id
+    ) || []
+  const relationTargetById = new Map(
+    props.elements.map((element) => [element.id, element])
+  )
+  const relationSummary = props.elements.reduce(
+    (total, element) => total + (element.relations?.length || 0),
+    0
+  )
+  const typeFilters = Object.entries(typeCounts)
+    .sort(([, left], [, right]) => right - left)
+    .slice(0, 6)
+  const issueCount =
+    (props.validation?.summary.errors || 0) +
+    (props.validation?.summary.warnings || 0)
+  const requirementCount = typeCounts.Requirement || 0
+  const blockCount = typeCounts.Block || 0
 
   return (
-    <div className='grid gap-4 xl:grid-cols-[420px_minmax(0,1fr)]'>
-      <Card className='sysml-card self-start'>
-        <CardHeader className='space-y-3'>
+    <div className='grid gap-4 2xl:grid-cols-[340px_minmax(0,1fr)]'>
+      <Card className='self-start overflow-hidden border-0 bg-muted/25 shadow-none'>
+        <CardHeader className='space-y-5 pb-3'>
           <div className='flex items-center justify-between gap-3'>
-            <div>
+            <div className='min-w-0'>
               <CardTitle>模型元素</CardTitle>
-              <CardDescription>按类型筛选、搜索并选择元素</CardDescription>
+              <CardDescription>浏览当前项目的 SysML 对象</CardDescription>
             </div>
-            <Button size='sm' onClick={props.onNew}>
+            <Button size='sm' className='rounded-full shadow-sm' onClick={props.onNew}>
               <Plus className='size-4' />
               新建
             </Button>
           </div>
-          <div className='grid gap-2 sm:grid-cols-[150px_1fr]'>
-            <Select value={props.typeFilter} onValueChange={props.setTypeFilter}>
-              <SelectTrigger className='w-full'>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value='all'>全部类型</SelectItem>
-                {props.types.map((type) => (
-                  <SelectItem key={type} value={type}>
-                    {labelType(type)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          <div className='rounded-2xl bg-background/80 p-3 shadow-sm shadow-slate-950/5'>
             <div className='relative'>
               <Search className='absolute left-3 top-2.5 size-4 text-muted-foreground' />
               <Input
-                className='pl-9'
+                className='h-10 border-0 bg-muted/60 pl-9 shadow-none focus-visible:ring-1'
                 placeholder='搜索 ID、名称或描述'
                 value={props.query}
                 onChange={(event) => props.setQuery(event.target.value)}
               />
             </div>
+            <div className='mt-3 flex flex-wrap gap-2'>
+              <button
+                type='button'
+                className={cn(
+                  'rounded-full px-3 py-1.5 text-xs font-medium transition-colors',
+                  props.typeFilter === 'all'
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground'
+                )}
+                onClick={() => props.setTypeFilter('all')}
+              >
+                全部
+              </button>
+              {(typeFilters.length
+                ? typeFilters
+                : props.types.slice(0, 5).map((type) => [type, 0] as [string, number])
+              ).map(([type, count]) => (
+                <button
+                  key={type}
+                  type='button'
+                  className={cn(
+                    'rounded-full px-3 py-1.5 text-xs font-medium transition-colors',
+                    props.typeFilter === type
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground'
+                  )}
+                  onClick={() => props.setTypeFilter(type)}
+                >
+                  {labelType(type)}
+                  {count ? ` ${count}` : ''}
+                </button>
+              ))}
+              {props.typeFilter !== 'all' || props.query ? (
+                <button
+                  type='button'
+                  className='rounded-full px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground'
+                  onClick={() => {
+                    props.setTypeFilter('all')
+                    props.setQuery('')
+                  }}
+                >
+                  清除筛选
+                </button>
+              ) : null}
+            </div>
           </div>
-          <div className='grid grid-cols-3 gap-2 text-xs'>
-            <div className='rounded-md border bg-muted/30 px-3 py-2'>
-              <div className='font-semibold'>{props.elements.length}</div>
-              <div className='text-muted-foreground'>Elements</div>
-            </div>
-            <div className='rounded-md border bg-muted/30 px-3 py-2'>
-              <div className='font-semibold'>{Object.keys(typeCounts).length}</div>
-              <div className='text-muted-foreground'>Types</div>
-            </div>
-            <div className='rounded-md border bg-muted/30 px-3 py-2'>
-              <div className='font-semibold'>{props.validation?.summary.warnings || 0}</div>
-              <div className='text-muted-foreground'>Warnings</div>
-            </div>
+          <div className='flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground'>
+            <span>
+              <strong className='font-semibold text-foreground'>
+                {props.elements.length}
+              </strong>{' '}
+              个元素
+            </span>
+            <span className='h-1 w-1 rounded-full bg-muted-foreground/40' />
+            <span>
+              <strong className='font-semibold text-foreground'>
+                {Object.keys(typeCounts).length}
+              </strong>{' '}
+              种类型
+            </span>
+            <span className='h-1 w-1 rounded-full bg-muted-foreground/40' />
+            <span
+              className={cn(
+                issueCount && props.validation?.summary.errors
+                  ? 'text-destructive'
+                  : ''
+              )}
+            >
+              <strong className='font-semibold text-current'>{issueCount}</strong>{' '}
+              个问题
+            </span>
           </div>
+          {props.elements.length ? null : (
+            <div className='rounded-2xl bg-gradient-to-br from-sky-50 to-background p-4 text-sm dark:from-sky-950/30'>
+              <div className='font-semibold'>从这里开始建模</div>
+              <p className='mt-1 text-xs text-muted-foreground'>
+                新建需求或结构块，也可以从 MDK / JSON / XMI 导入已有模型。
+              </p>
+              <div className='mt-3 flex flex-wrap gap-2'>
+                <Button size='sm' variant='secondary' onClick={props.onNew}>
+                  新建元素
+                </Button>
+                <Button
+                  size='sm'
+                  variant='ghost'
+                  onClick={() => toast.info('请切换到 MDK 页导入外部模型')}
+                >
+                  去导入
+                  <ArrowRight className='size-4' />
+                </Button>
+              </div>
+            </div>
+          )}
         </CardHeader>
         <CardContent className='p-0'>
-          <ScrollArea className='h-[520px]'>
+          <ScrollArea className='h-[620px]'>
             {props.elements.length ? (
-              <div className='divide-y'>
+              <div className='space-y-1 p-2'>
                 {props.elements.map((element) => (
                   <button
                     key={element.id}
                     className={cn(
-                      'grid w-full gap-1 px-4 py-3 text-left transition-colors hover:bg-muted/60',
-                      props.selectedId === element.id && 'bg-muted'
+                      'group relative w-full rounded-xl p-3 text-left transition-colors hover:bg-background/80',
+                      props.selectedId === element.id &&
+                        'bg-background shadow-sm shadow-slate-950/5'
                     )}
                     type='button'
                     onClick={() => props.setSelectedId(element.id)}
                   >
-                    <div className='flex items-center justify-between gap-3'>
-                      <span className='font-mono text-sm font-semibold'>
-                        {element.id}
-                      </span>
-                      <Badge variant='secondary'>{labelType(element.type)}</Badge>
+                    <span
+                      className={cn(
+                        'absolute left-0 top-3 h-10 w-1 rounded-full bg-transparent transition-colors',
+                        props.selectedId === element.id && 'bg-primary'
+                      )}
+                    />
+                    <div className='min-w-0'>
+                      <div className='truncate pr-2 text-sm font-semibold'>
+                        {element.name || '未命名元素'}
+                      </div>
+                      <div className='mt-1 flex min-w-0 flex-wrap items-center gap-1.5'>
+                        <span className='min-w-0 truncate font-mono text-[11px] text-muted-foreground'>
+                          {element.id || 'NEW-ELEMENT'}
+                        </span>
+                        <TypeBadge type={element.type} compact />
+                      </div>
                     </div>
-                    <div className='truncate text-sm font-medium'>
-                      {element.name || '未命名元素'}
-                    </div>
-                    <p className='line-clamp-2 text-xs text-muted-foreground'>
+                    <p className='mt-2 line-clamp-2 text-xs text-muted-foreground'>
                       {element.description || '暂无描述'}
                     </p>
+                    <div className='mt-3 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground'>
+                      <span className='rounded-full bg-muted/70 px-2 py-1'>
+                        {element.owner || '未分配'}
+                      </span>
+                      <span className='rounded-full bg-muted/70 px-2 py-1'>
+                        {element.relations?.length || 0} relations
+                      </span>
+                    </div>
                   </button>
                 ))}
               </div>
             ) : (
-              <EmptyState title='没有元素' description='当前筛选条件下没有模型元素' />
+              <div className='px-4 pb-6 pt-8'>
+                <EmptyState
+                  title='当前没有可显示元素'
+                  description='调整筛选条件，或使用上方入口新建/导入模型元素。'
+                />
+              </div>
             )}
           </ScrollArea>
         </CardContent>
       </Card>
 
       <div className='space-y-4'>
-        <Card>
-          <CardHeader>
-            <div className='flex items-start justify-between gap-3'>
-              <div>
-                <CardTitle>元素编辑器</CardTitle>
+        <div className='grid gap-2 sm:grid-cols-4'>
+          <LocalMetric label='元素' value={props.elements.length} />
+          <LocalMetric label='需求' value={requirementCount} />
+          <LocalMetric label='结构块' value={blockCount} />
+          <LocalMetric
+            label='校验'
+            value={issueCount}
+            tone={props.validation?.summary.errors ? 'danger' : issueCount ? 'warning' : 'success'}
+          />
+        </div>
+
+        <Card className='overflow-hidden border-0 bg-background shadow-sm'>
+          <CardHeader className='bg-gradient-to-r from-muted/35 via-background to-background'>
+            <div className='flex flex-wrap items-start justify-between gap-3'>
+              <div className='min-w-0'>
+                <div className='mb-2 flex flex-wrap items-center gap-2'>
+                  <TypeBadge type={props.form.type} />
+                  <Badge variant='outline' className='font-mono'>
+                    {props.form.id || '后端生成 ID'}
+                  </Badge>
+                  {selectedIssues.length ? (
+                    <Badge variant='destructive'>{selectedIssues.length} 个问题</Badge>
+                  ) : (
+                    <Badge variant='secondary'>语义正常</Badge>
+                  )}
+                </div>
+                <CardTitle className='truncate text-2xl'>
+                  {props.form.name || '正在编辑一个新模型元素'}
+                </CardTitle>
                 <CardDescription>
                   编辑普通模型元素；View / Viewpoint 请到 Views 页维护
                 </CardDescription>
               </div>
-              <Button
-                variant='destructive'
-                size='sm'
-                onClick={props.onDelete}
-                disabled={!props.form.id || props.busy === 'delete-element'}
-              >
-                <Trash2 className='size-4' />
-                删除
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <form className='grid gap-4' onSubmit={props.onSave}>
-              <div className='grid gap-4 md:grid-cols-2'>
-                <Field label='ID'>
-                  <Input
-                    value={props.form.id}
-                    onChange={(event) => props.updateForm('id', event.target.value)}
-                    placeholder='留空可由后端生成'
-                  />
-                </Field>
-                <Field label='类型'>
-                  <Select
-                    value={props.form.type}
-                    onValueChange={props.handleTypeChange}
-                  >
-                    <SelectTrigger className='w-full'>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {props.types.map((type) => (
-                        <SelectItem key={type} value={type}>
-                          {labelType(type)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </Field>
-                <Field label='名称'>
-                  <Input
-                    required
-                    value={props.form.name}
-                    onChange={(event) => props.updateForm('name', event.target.value)}
-                  />
-                </Field>
-                <Field label='负责人'>
-                  <Input
-                    value={props.form.owner || ''}
-                    onChange={(event) => props.updateForm('owner', event.target.value)}
-                  />
-                </Field>
-                <Field label='构造型'>
-                  <Input
-                    value={props.form.stereotype || ''}
-                    onChange={(event) =>
-                      props.updateForm('stereotype', event.target.value)
-                    }
-                  />
-                </Field>
-              </div>
-
-              <Field label='描述'>
-                <Textarea
-                  rows={3}
-                  value={props.form.description || ''}
-                  onChange={(event) =>
-                    props.updateForm('description', event.target.value)
-                  }
-                />
-              </Field>
-
-              <div className='grid gap-4 lg:grid-cols-2'>
-                <Field label='属性 JSON'>
-                  <Textarea
-                    className='min-h-[220px] font-mono text-xs'
-                    value={props.attributesText}
-                    onChange={(event) => props.setAttributesText(event.target.value)}
-                  />
-                </Field>
-                <Field label='关系 JSON'>
-                  <Textarea
-                    className='min-h-[220px] font-mono text-xs'
-                    value={props.relationsText}
-                    onChange={(event) => props.setRelationsText(event.target.value)}
-                  />
-                </Field>
-              </div>
-
-              <div className='flex flex-wrap justify-end gap-2'>
-                <Button type='button' variant='outline' onClick={props.onAddRelation}>
-                  <Plus className='size-4' />
-                  添加关系
-                </Button>
-                <Button type='submit' disabled={props.busy === 'save-element'}>
+              <div className='flex flex-wrap gap-2'>
+                <Button
+                  size='sm'
+                  form='model-element-form'
+                  type='submit'
+                  disabled={props.busy === 'save-element'}
+                >
                   {props.busy === 'save-element' ? (
                     <Loader2 className='size-4 animate-spin' />
                   ) : (
@@ -2344,7 +2560,136 @@ function ModelTab(props: ModelTabProps) {
                   )}
                   保存元素
                 </Button>
+                <ModelActionsMenu
+                  canDelete={Boolean(props.form.id)}
+                  busy={props.busy}
+                  onAddRelation={props.onAddRelation}
+                  onDelete={props.onDelete}
+                  attributesText={props.attributesText}
+                  relationsText={props.relationsText}
+                  setAttributesText={props.setAttributesText}
+                  setRelationsText={props.setRelationsText}
+                />
               </div>
+            </div>
+          </CardHeader>
+          <CardContent className='p-4 md:p-6'>
+            <form
+              id='model-element-form'
+              className='grid gap-5'
+              onSubmit={props.onSave}
+            >
+              <Tabs defaultValue='overview' className='space-y-4'>
+                <TabsList className='grid w-full grid-cols-2 rounded-full bg-muted/50 p-1'>
+                  <TabsTrigger value='overview'>概览</TabsTrigger>
+                  <TabsTrigger value='metadata'>元数据</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value='overview' className='mt-0 space-y-4'>
+                  <section className='rounded-2xl bg-muted/30 p-5'>
+                    <SectionHeading
+                      title='核心内容'
+                      description='默认只编辑用户最常用的信息，减少一屏内的输入框。'
+                    />
+                    <div className='mt-4 grid gap-4'>
+                      <Field label='名称'>
+                        <Input
+                          required
+                          className='h-11 text-base'
+                          value={props.form.name}
+                          onChange={(event) =>
+                            props.updateForm('name', event.target.value)
+                          }
+                          placeholder='例如：供电连续性需求'
+                        />
+                      </Field>
+                      <Field label='描述'>
+                        <Textarea
+                          rows={4}
+                          value={props.form.description || ''}
+                          onChange={(event) =>
+                            props.updateForm('description', event.target.value)
+                          }
+                          placeholder='描述这个元素的工程含义、边界或约束。'
+                        />
+                      </Field>
+                    </div>
+                  </section>
+
+                  <section className='grid gap-3 md:grid-cols-3'>
+                    <InlineSelectBlock
+                      label='类型'
+                      value={labelType(props.form.type)}
+                      hint='决定元素模板和图谱样式'
+                    >
+                      <Select
+                        value={props.form.type}
+                        onValueChange={props.handleTypeChange}
+                      >
+                        <SelectTrigger className='mt-3 w-full'>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {props.types.map((type) => (
+                            <SelectItem key={type} value={type}>
+                              {labelType(type)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </InlineSelectBlock>
+                    <MetadataBlock
+                      label='ID'
+                      value={props.form.id || '保存后生成'}
+                      hint='唯一模型标识'
+                    />
+                    <MetadataBlock
+                      label='负责人'
+                      value={props.form.owner || '未分配'}
+                      hint='归属团队或责任人'
+                    />
+                  </section>
+                </TabsContent>
+
+                <TabsContent value='metadata' className='mt-0 space-y-4'>
+                  <section className='rounded-2xl bg-muted/30 p-5'>
+                    <SectionHeading
+                      title='模型元数据'
+                      description='这些字段通常不需要频繁修改，放在单独页签里保持主界面清爽。'
+                    />
+                    <div className='mt-4 grid gap-4 md:grid-cols-2'>
+                      <Field label='ID'>
+                        <Input
+                          value={props.form.id}
+                          onChange={(event) =>
+                            props.updateForm('id', event.target.value)
+                          }
+                          placeholder='留空可由后端生成'
+                        />
+                      </Field>
+                      <Field label='负责人'>
+                        <Input
+                          value={props.form.owner || ''}
+                          onChange={(event) =>
+                            props.updateForm('owner', event.target.value)
+                          }
+                          placeholder='例如：总体设计组'
+                        />
+                      </Field>
+                      <Field label='构造型'>
+                        <Input
+                          value={props.form.stereotype || ''}
+                          onChange={(event) =>
+                            props.updateForm('stereotype', event.target.value)
+                          }
+                          placeholder='例如：requirement / block'
+                        />
+                      </Field>
+                    </div>
+                  </section>
+                </TabsContent>
+
+              </Tabs>
             </form>
           </CardContent>
         </Card>
@@ -2357,16 +2702,620 @@ function ModelTab(props: ModelTabProps) {
           onReview={props.onAiReview}
           onClosureSuggestions={props.onAiClosureSuggestions}
         />
+
+        <ElementContextPanel
+          selectedRelations={selectedRelations}
+          selectedAttributes={selectedAttributes}
+          selectedIssues={selectedIssues}
+          relationSummary={relationSummary}
+          relationTargetById={relationTargetById}
+        />
       </div>
     </div>
   )
 }
 
+function ElementContextPanel({
+  selectedRelations,
+  selectedAttributes,
+  selectedIssues,
+  relationSummary,
+  relationTargetById,
+}: {
+  selectedRelations: Relation[]
+  selectedAttributes: Record<string, unknown>
+  selectedIssues: ValidationPayload['issues']
+  relationSummary: number
+  relationTargetById: Map<string, SysmlElement>
+}) {
+  return (
+    <Collapsible>
+      <Card className='border-0 bg-muted/25 shadow-none'>
+        <CollapsibleTrigger asChild>
+          <button
+            type='button'
+            className='flex w-full items-center justify-between gap-3 p-4 text-left'
+          >
+            <div>
+              <div className='font-semibold'>元素上下文</div>
+              <p className='text-sm text-muted-foreground'>
+                {selectedRelations.length} 个当前关系，{Object.keys(selectedAttributes).length} 个属性，
+                {selectedIssues.length || 0} 个当前元素问题。
+              </p>
+            </div>
+            <Badge variant='outline'>{relationSummary} total relations</Badge>
+          </button>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <CardContent className='grid gap-3 p-4 pt-0 lg:grid-cols-3'>
+            <div className='rounded-2xl bg-background/70 p-3'>
+              <div className='mb-3 text-sm font-semibold'>关系</div>
+              {selectedRelations.length ? (
+                <div className='divide-y divide-border/50'>
+                  {selectedRelations.slice(0, 6).map((relation, index) => {
+                    const target = relationTargetById.get(relation.target)
+                    return (
+                      <div
+                        key={`${relation.type}-${relation.target}-${index}`}
+                        className='grid gap-1 py-2 text-sm first:pt-0 last:pb-0'
+                      >
+                        <div className='flex items-center justify-between gap-2'>
+                          <Badge variant='secondary'>
+                            {labelRelation(relation.type)}
+                          </Badge>
+                          <span className='font-mono text-xs text-muted-foreground'>
+                            {relation.target}
+                          </span>
+                        </div>
+                        <div className='truncate font-medium'>
+                          {target?.name || '目标元素未在当前列表中'}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : (
+                <p className='text-sm text-muted-foreground'>
+                  还没有关系。可以点击“添加关系”维护。
+                </p>
+              )}
+            </div>
+
+            <div className='rounded-2xl bg-background/70 p-3'>
+              <div className='mb-3 text-sm font-semibold'>属性</div>
+              {Object.keys(selectedAttributes).length ? (
+                <div className='divide-y divide-border/50 text-xs'>
+                  {Object.entries(selectedAttributes)
+                    .slice(0, 6)
+                    .map(([key, value]) => (
+                      <div
+                        key={key}
+                        className='grid gap-1 py-2 first:pt-0 last:pb-0'
+                      >
+                        <span className='font-mono font-semibold'>{key}</span>
+                        <span className='break-all text-muted-foreground'>
+                          {String(value)}
+                        </span>
+                      </div>
+                    ))}
+                </div>
+              ) : (
+                <p className='text-sm text-muted-foreground'>暂无属性。</p>
+              )}
+            </div>
+
+            <div className='rounded-2xl bg-background/70 p-3'>
+              <div className='mb-3 text-sm font-semibold'>当前元素校验</div>
+              {selectedIssues.length ? (
+                <div className='space-y-2'>
+                  {selectedIssues.slice(0, 4).map((issue, index) => (
+                    <div
+                      key={`${issue.message}-${index}`}
+                      className='rounded-xl bg-destructive/10 p-2 text-xs text-destructive'
+                    >
+                      {issue.message}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className='flex items-start gap-2 text-sm text-muted-foreground'>
+                  <CheckCircle2 className='mt-0.5 size-4 text-emerald-600' />
+                  当前元素未发现校验问题。
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </CollapsibleContent>
+      </Card>
+    </Collapsible>
+  )
+}
+
+function LocalMetric({
+  label,
+  value,
+  tone = 'default',
+}: {
+  label: string
+  value: number
+  tone?: 'default' | 'success' | 'warning' | 'danger'
+}) {
+  const toneClass = {
+    default: 'bg-muted/30 text-foreground',
+    success: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/25 dark:text-emerald-300',
+    warning: 'bg-amber-50 text-amber-700 dark:bg-amber-950/25 dark:text-amber-300',
+    danger: 'bg-destructive/10 text-destructive',
+  }[tone]
+
+  return (
+    <div className={cn('rounded-2xl px-4 py-3', toneClass)}>
+      <div className='text-2xl font-semibold'>{value}</div>
+      <div className='text-xs opacity-75'>{label}</div>
+    </div>
+  )
+}
+
+function ModelActionsMenu({
+  canDelete,
+  busy,
+  onAddRelation,
+  onDelete,
+  attributesText,
+  relationsText,
+  setAttributesText,
+  setRelationsText,
+}: {
+  canDelete: boolean
+  busy: string
+  onAddRelation: () => void
+  onDelete: () => void
+  attributesText: string
+  relationsText: string
+  setAttributesText: (value: string) => void
+  setRelationsText: (value: string) => void
+}) {
+  const [jsonOpen, setJsonOpen] = useState(false)
+
+  return (
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant='outline' size='sm'>
+            <MoreVertical className='size-4' />
+            更多
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align='end' className='w-52'>
+          <DropdownMenuLabel>二级操作</DropdownMenuLabel>
+          <DropdownMenuItem onClick={onAddRelation}>
+            <Plus className='size-4' />
+            添加关系
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onSelect={(event) => {
+              event.preventDefault()
+              setJsonOpen(true)
+            }}
+          >
+            <Code2 className='size-4' />
+            编辑 JSON
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            variant='destructive'
+            disabled={!canDelete || busy === 'delete-element'}
+            onClick={onDelete}
+          >
+            <Trash2 className='size-4' />
+            删除元素
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <JsonEditorSheet
+        open={jsonOpen}
+        onOpenChange={setJsonOpen}
+        attributesText={attributesText}
+        relationsText={relationsText}
+        setAttributesText={setAttributesText}
+        setRelationsText={setRelationsText}
+      />
+    </>
+  )
+}
+
+function JsonEditorSheet({
+  attributesText,
+  relationsText,
+  setAttributesText,
+  setRelationsText,
+  trigger,
+  open,
+  onOpenChange,
+}: {
+  attributesText: string
+  relationsText: string
+  setAttributesText: (value: string) => void
+  setRelationsText: (value: string) => void
+  trigger?: ReactNode
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+}) {
+  const [activeTab, setActiveTab] = useState<'attributes' | 'relations'>(
+    'attributes'
+  )
+  const attributesState = getJsonState<Record<string, unknown>>(
+    attributesText,
+    {}
+  )
+  const relationsState = getJsonState<Relation[]>(relationsText, [])
+  const activeText = activeTab === 'attributes' ? attributesText : relationsText
+  const activeState = activeTab === 'attributes' ? attributesState : relationsState
+  const activeSetter =
+    activeTab === 'attributes' ? setAttributesText : setRelationsText
+  const attributeCount =
+    attributesState.valid && attributesState.value
+      ? Object.keys(attributesState.value).length
+      : 0
+  const relationCount =
+    relationsState.valid && Array.isArray(relationsState.value)
+      ? relationsState.value.length
+      : 0
+
+  const formatActiveJson = () => {
+    try {
+      activeSetter(JSON.stringify(JSON.parse(activeText || '{}'), null, 2))
+      toast.success('JSON 已格式化')
+    } catch {
+      toast.error('JSON 格式不正确，无法格式化')
+    }
+  }
+
+  const validateActiveJson = () => {
+    if (activeState.valid) {
+      toast.success('JSON 格式正确')
+    } else {
+      toast.error(activeState.error || 'JSON 格式不正确')
+    }
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      {trigger ? (
+        <SheetTrigger asChild>{trigger}</SheetTrigger>
+      ) : open === undefined ? (
+        <SheetTrigger asChild>
+          <Button variant='outline' size='sm'>
+            <Code2 className='size-4' />
+            JSON
+          </Button>
+        </SheetTrigger>
+      ) : null}
+      <SheetContent className='gap-0 sm:max-w-2xl'>
+        <SheetHeader className='border-b bg-muted/20 pr-12'>
+          <div className='flex items-start justify-between gap-4'>
+            <div>
+              <SheetTitle>高级模型数据</SheetTitle>
+              <SheetDescription>
+                仅用于导入、调试或批量维护属性与关系；日常编辑优先使用概览和元数据。
+              </SheetDescription>
+            </div>
+            <Button size='sm' variant='outline' onClick={formatActiveJson}>
+              <Code2 className='size-4' />
+              格式化
+            </Button>
+          </div>
+        </SheetHeader>
+        <div className='grid grid-cols-3 gap-2 border-b px-4 py-3'>
+          <JsonSummaryCard
+            label='属性'
+            value={attributeCount}
+            description='attributes'
+            active={activeTab === 'attributes'}
+            valid={attributesState.valid}
+            onClick={() => setActiveTab('attributes')}
+          />
+          <JsonSummaryCard
+            label='关系'
+            value={relationCount}
+            description='relations'
+            active={activeTab === 'relations'}
+            valid={relationsState.valid}
+            onClick={() => setActiveTab('relations')}
+          />
+          <div className='rounded-2xl bg-muted/35 p-3 text-xs'>
+            <div className='font-semibold'>状态</div>
+            <div
+              className={cn(
+                'mt-2 font-medium',
+                attributesState.valid && relationsState.valid
+                  ? 'text-emerald-600'
+                  : 'text-destructive'
+              )}
+            >
+              {attributesState.valid && relationsState.valid
+                ? 'JSON 格式正常'
+                : '存在格式问题'}
+            </div>
+            <p className='mt-1 text-muted-foreground'>保存元素时一并写入</p>
+          </div>
+        </div>
+        <div className='px-4 pt-4'>
+          <Tabs
+            value={activeTab}
+            onValueChange={(value) =>
+              setActiveTab(value as 'attributes' | 'relations')
+            }
+          >
+            <TabsList className='grid w-full grid-cols-2 rounded-full bg-muted/60 p-1'>
+              <TabsTrigger value='attributes'>属性 Attributes</TabsTrigger>
+              <TabsTrigger value='relations'>关系 Relations</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
+        <ScrollArea className='min-h-0 flex-1 px-4 py-4'>
+          <JsonEditorPanel
+            title={activeTab === 'attributes' ? '属性 JSON' : '关系 JSON'}
+            description={
+              activeTab === 'attributes'
+                ? '维护当前元素的扩展属性，例如 domain、verification、text。'
+                : '维护当前元素指向其他元素的关系，目标元素需要存在于模型中。'
+            }
+            value={activeText}
+            valid={activeState.valid}
+            error={activeState.error}
+            emptyHint={
+              activeTab === 'attributes'
+                ? '当前元素没有扩展属性，可以输入 { } 或添加字段。'
+                : '当前元素还没有关系，可以输入 [] 或通过“添加关系”创建。'
+            }
+            onChange={activeSetter}
+          />
+        </ScrollArea>
+        <SheetFooter className='border-t bg-background/95 sm:flex-row sm:justify-between'>
+          <div className='text-xs text-muted-foreground'>
+            当前正在编辑：
+            {activeTab === 'attributes' ? '属性 JSON' : '关系 JSON'}
+          </div>
+          <div className='flex gap-2'>
+            <Button variant='outline' onClick={validateActiveJson}>
+              校验 JSON
+            </Button>
+            <Button variant='outline' onClick={formatActiveJson}>
+              格式化
+            </Button>
+            <SheetClose asChild>
+              <Button>完成</Button>
+            </SheetClose>
+          </div>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
+  )
+}
+
+function JsonSummaryCard({
+  label,
+  value,
+  description,
+  active,
+  valid,
+  onClick,
+}: {
+  label: string
+  value: number
+  description: string
+  active: boolean
+  valid: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type='button'
+      className={cn(
+        'rounded-2xl p-3 text-left text-xs transition-colors',
+        active ? 'bg-primary text-primary-foreground' : 'bg-muted/35 hover:bg-muted'
+      )}
+      onClick={onClick}
+    >
+      <div className='flex items-center justify-between gap-2'>
+        <span className='font-semibold'>{label}</span>
+        <span
+          className={cn(
+            'rounded-full px-2 py-0.5 text-[10px]',
+            active
+              ? 'bg-primary-foreground/20'
+              : valid
+                ? 'bg-emerald-500/10 text-emerald-600'
+                : 'bg-destructive/10 text-destructive'
+          )}
+        >
+          {valid ? 'valid' : 'error'}
+        </span>
+      </div>
+      <div className='mt-3 text-2xl font-semibold leading-none'>{value}</div>
+      <div
+        className={cn(
+          'mt-1',
+          active ? 'text-primary-foreground/75' : 'text-muted-foreground'
+        )}
+      >
+        {description}
+      </div>
+    </button>
+  )
+}
+
+function JsonEditorPanel({
+  title,
+  description,
+  value,
+  valid,
+  error,
+  emptyHint,
+  onChange,
+}: {
+  title: string
+  description: string
+  value: string
+  valid: boolean
+  error?: string
+  emptyHint: string
+  onChange: (value: string) => void
+}) {
+  return (
+    <div className='rounded-2xl bg-muted/25 p-4'>
+      <div className='mb-3 flex items-start justify-between gap-4'>
+        <div>
+          <div className='font-semibold'>{title}</div>
+          <p className='text-xs text-muted-foreground'>{description}</p>
+        </div>
+        <Badge variant={valid ? 'secondary' : 'destructive'}>
+          {valid ? '格式正常' : '格式错误'}
+        </Badge>
+      </div>
+      {!value.trim() ? (
+        <div className='mb-3 rounded-xl bg-background/70 p-3 text-sm text-muted-foreground'>
+          {emptyHint}
+        </div>
+      ) : null}
+      <Textarea
+        className={cn(
+          'min-h-[460px] resize-none bg-background font-mono text-xs shadow-sm',
+          !valid && 'border-destructive focus-visible:ring-destructive'
+        )}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      {!valid && error ? (
+        <p className='mt-2 text-xs text-destructive'>{error}</p>
+      ) : null}
+    </div>
+  )
+}
+
+function getJsonState<T>(
+  text: string,
+  fallback: T
+): { valid: true; value: T; error?: never } | { valid: false; value: T; error: string } {
+  try {
+    return {
+      valid: true,
+      value: (text.trim() ? JSON.parse(text) : fallback) as T,
+    }
+  } catch (error) {
+    return {
+      valid: false,
+      value: fallback,
+      error: error instanceof Error ? error.message : 'JSON 格式不正确',
+    }
+  }
+}
+
+function SectionHeading({
+  title,
+  description,
+}: {
+  title: string
+  description: string
+}) {
+  return (
+    <div>
+      <h3 className='text-sm font-semibold'>{title}</h3>
+      <p className='text-xs text-muted-foreground'>{description}</p>
+    </div>
+  )
+}
+
+function MetadataBlock({
+  label,
+  value,
+  hint,
+}: {
+  label: string
+  value: string
+  hint: string
+}) {
+  return (
+    <div className='rounded-2xl bg-muted/35 p-4'>
+      <div className='text-xs font-medium uppercase tracking-wide text-muted-foreground'>
+        {label}
+      </div>
+      <div className='mt-2 truncate text-sm font-semibold'>{value}</div>
+      <p className='mt-1 text-xs text-muted-foreground'>{hint}</p>
+    </div>
+  )
+}
+
+function InlineSelectBlock({
+  label,
+  value,
+  hint,
+  children,
+}: {
+  label: string
+  value: string
+  hint: string
+  children: ReactNode
+}) {
+  return (
+    <div className='rounded-2xl bg-muted/35 p-4'>
+      <div className='text-xs font-medium uppercase tracking-wide text-muted-foreground'>
+        {label}
+      </div>
+      <div className='mt-2 truncate text-sm font-semibold'>{value}</div>
+      <p className='mt-1 text-xs text-muted-foreground'>{hint}</p>
+      {children}
+    </div>
+  )
+}
+
+function TypeBadge({ type, compact = false }: { type: string; compact?: boolean }) {
+  return (
+    <Badge
+      variant='outline'
+      className={cn(
+        'max-w-full shrink truncate',
+        compact && 'px-1.5 py-0 text-[10px]',
+        typeBadgeClass(type)
+      )}
+    >
+      {labelType(type)}
+    </Badge>
+  )
+}
+
+function typeBadgeClass(type: string) {
+  const normalized = type.toLowerCase()
+  if (normalized.includes('requirement')) {
+    return 'border-sky-300 bg-sky-50 text-sky-700 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-300'
+  }
+  if (normalized.includes('block')) {
+    return 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300'
+  }
+  if (normalized.includes('test')) {
+    return 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300'
+  }
+  if (normalized.includes('interface') || normalized.includes('port')) {
+    return 'border-cyan-300 bg-cyan-50 text-cyan-700 dark:border-cyan-900 dark:bg-cyan-950 dark:text-cyan-300'
+  }
+  if (normalized.includes('constraint')) {
+    return 'border-rose-300 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-300'
+  }
+  if (normalized.includes('activity') || normalized.includes('state')) {
+    return 'border-violet-300 bg-violet-50 text-violet-700 dark:border-violet-900 dark:bg-violet-950 dark:text-violet-300'
+  }
+  return 'border-slate-300 bg-slate-50 text-slate-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300'
+}
+
 function ValidationPanel({ validation }: { validation: ValidationPayload | null }) {
   if (!validation) return null
+  const visibleIssues = validation.issues.slice(0, 3)
+  const hiddenIssues = validation.issues.slice(3)
+  const hasErrors = validation.summary.errors > 0
+
   return (
-    <Card className='sysml-card'>
-      <CardHeader>
+    <Card className='sysml-card overflow-hidden'>
+      <CardHeader className='pb-3'>
         <div className='flex items-center justify-between gap-3'>
           <div>
             <CardTitle>语义校验</CardTitle>
@@ -2382,22 +3331,55 @@ function ValidationPanel({ validation }: { validation: ValidationPayload | null 
           </Badge>
         </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className='space-y-3'>
         {validation.issues.length ? (
-          <div className='space-y-2'>
-            {validation.issues.slice(0, 8).map((issue, index) => (
-              <Alert
-                key={`${issue.element_id}-${index}`}
-                variant={issue.severity === 'error' ? 'destructive' : 'default'}
-              >
+          <>
+            <div
+              className={cn(
+                'flex items-center justify-between rounded-2xl p-3 text-sm',
+                hasErrors ? 'bg-destructive/10' : 'bg-amber-50 text-amber-950 dark:bg-amber-950/25 dark:text-amber-100'
+              )}
+            >
+              <div className='flex items-center gap-2'>
                 <AlertCircle className='size-4' />
-                <AlertTitle>
-                  {severityLabels[issue.severity]} / {issue.element_id}
-                </AlertTitle>
-                <AlertDescription>{issue.message}</AlertDescription>
-              </Alert>
-            ))}
-          </div>
+                <span className='font-medium'>
+                  {hasErrors ? '存在错误，需要优先处理' : '只有警告，可继续发布但建议检查'}
+                </span>
+              </div>
+              {hiddenIssues.length ? (
+                <Badge variant='outline'>+{hiddenIssues.length} more</Badge>
+              ) : null}
+            </div>
+
+            <div className='divide-y rounded-2xl bg-muted/25'>
+              {visibleIssues.map((issue, index) => (
+                <ValidationIssueRow
+                  key={`${issue.element_id}-${index}`}
+                  issue={issue}
+                />
+              ))}
+            </div>
+
+            {hiddenIssues.length ? (
+              <Collapsible>
+                <CollapsibleTrigger asChild>
+                  <Button variant='ghost' size='sm' className='w-full rounded-xl'>
+                    查看全部 {validation.issues.length} 条问题
+                  </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <div className='mt-2 max-h-72 overflow-auto rounded-2xl bg-muted/20'>
+                    {hiddenIssues.map((issue, index) => (
+                      <ValidationIssueRow
+                        key={`${issue.element_id}-hidden-${index}`}
+                        issue={issue}
+                      />
+                    ))}
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            ) : null}
+          </>
         ) : (
           <div className='flex items-center gap-2 text-sm text-muted-foreground'>
             <CheckCircle2 className='size-4 text-emerald-600' />
@@ -2409,22 +3391,43 @@ function ValidationPanel({ validation }: { validation: ValidationPayload | null 
   )
 }
 
+function ValidationIssueRow({
+  issue,
+}: {
+  issue: ValidationPayload['issues'][number]
+}) {
+  const destructive = issue.severity === 'error'
+
+  return (
+    <div className='flex items-start gap-3 px-3 py-2.5 text-sm'>
+      <AlertCircle
+        className={cn(
+          'mt-0.5 size-4 shrink-0',
+          destructive ? 'text-destructive' : 'text-amber-600'
+        )}
+      />
+      <div className='min-w-0'>
+        <div className='font-medium'>
+          {severityLabels[issue.severity]} / {issue.element_id}
+        </div>
+        <div className='truncate text-xs text-muted-foreground'>
+          {issue.message}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function OverviewTab({
   projects,
   currentProject,
-  currentBranch,
   totals,
   validation,
   onSelectProject,
-  onOpenProject,
-  onManageProjects,
-  onGoToMdk,
-  onGoToViews,
-  onGoToDocs,
+  onOpenWorkspace,
 }: {
   projects: Project[]
   currentProject?: Project
-  currentBranch: string
   totals: {
     projects: number
     branches: number
@@ -2435,246 +3438,118 @@ function OverviewTab({
   }
   validation: ValidationPayload | null
   onSelectProject: (projectId: string) => void
-  onOpenProject: () => void
-  onManageProjects: () => void
-  onGoToMdk: () => void
-  onGoToViews: () => void
-  onGoToDocs: () => void
+  onOpenWorkspace: () => void
 }) {
   const recentProjects = [...projects]
     .sort((left, right) => String(right.updated_at || '').localeCompare(String(left.updated_at || '')))
     .slice(0, 4)
   const validationCount =
     (validation?.summary.errors || 0) + (validation?.summary.warnings || 0)
-  const hasCurrentProject = Boolean(currentProject)
 
   return (
-    <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]'>
-      <div className='space-y-4'>
-        <Card className='sysml-card'>
-          <CardHeader>
-            <div className='flex flex-col gap-3 md:flex-row md:items-center md:justify-between'>
-              <div>
-                <CardTitle>统筹看板</CardTitle>
-                <CardDescription>
-                  先看全局项目组合，再进入具体项目做建模、View、文档和版本管理。
-                </CardDescription>
-              </div>
-              <Button onClick={onManageProjects}>
-                <Boxes className='size-4' />
-                管理项目
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>
-              <PortfolioMetric
-                label='项目'
-                value={totals.projects}
-                detail={`${totals.branches} branches`}
-                icon={Boxes}
-              />
-              <PortfolioMetric
-                label='模型元素'
-                value={totals.elements}
-                detail='all projects'
-                icon={LayoutDashboard}
-              />
-              <PortfolioMetric
-                label='View / Viewpoint'
-                value={totals.views}
-                detail='scoped views'
-                icon={Archive}
-              />
-              <PortfolioMetric
-                label='文档'
-                value={totals.documents}
-                detail={`${totals.commits} commits`}
-                icon={FileText}
-              />
-            </div>
-          </CardContent>
-        </Card>
-
-        <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]'>
-          <Card className='sysml-card'>
-            <CardHeader>
-              <CardTitle>最近项目</CardTitle>
+    <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]'>
+      <Card className='sysml-card overflow-hidden'>
+        <CardHeader className='pb-3'>
+          <div className='flex flex-col gap-3 md:flex-row md:items-end md:justify-between'>
+            <div>
+              <CardTitle>项目组合</CardTitle>
               <CardDescription>
-                选择项目后，右侧工作建议和顶部项目栏会随之切换。
+                最近项目和总体规模。选择项目后，再进入工作区处理具体事项。
               </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {recentProjects.length ? (
-                <div className='grid gap-3 md:grid-cols-2'>
-                  {recentProjects.map((project) => {
-                    const active = project.id === currentProject?.id
-                    return (
-                      <button
-                        key={project.id}
-                        type='button'
-                        onClick={() => onSelectProject(project.id)}
-                        className={cn(
-                          'rounded-lg border bg-background p-4 text-left transition hover:border-primary hover:bg-muted/40',
-                          active && 'border-primary bg-primary/5'
-                        )}
-                      >
-                        <div className='flex items-start justify-between gap-3'>
-                          <div className='min-w-0'>
-                            <div className='font-mono text-xs text-muted-foreground'>
-                              {project.id}
-                            </div>
-                            <div className='mt-1 truncate font-semibold'>
-                              {project.name || project.id}
-                            </div>
-                            <p className='mt-1 line-clamp-2 text-xs text-muted-foreground'>
-                              {project.description || 'No description yet'}
-                            </p>
-                          </div>
-                          <Badge variant={active ? 'default' : 'secondary'}>
-                            {active ? '当前' : '选择'}
-                          </Badge>
-                        </div>
-                        <div className='mt-3 flex flex-wrap gap-2 text-xs'>
-                          <Badge variant='outline'>{project.elements || 0} elements</Badge>
-                          <Badge variant='outline'>{project.views || 0} views</Badge>
-                          <Badge variant='outline'>{project.documents || 0} docs</Badge>
-                        </div>
-                      </button>
-                    )
-                  })}
-                </div>
-              ) : (
-                <EmptyState
-                  title='还没有项目'
-                  description='先进入 Projects 创建一个项目，再导入或编辑模型。'
-                />
-              )}
-            </CardContent>
-          </Card>
-
-          <Card className='sysml-card'>
-            <CardHeader>
-              <CardTitle>当前项目状态</CardTitle>
-              <CardDescription>这里不是编辑区，只告诉你下一步该干什么。</CardDescription>
-            </CardHeader>
-            <CardContent className='space-y-4'>
-              {hasCurrentProject ? (
-                <>
-                  <div className='rounded-md border bg-muted/20 p-4'>
-                    <div className='text-xs text-muted-foreground'>当前项目</div>
-                    <div className='mt-1 text-lg font-semibold'>
-                      {currentProject?.name || currentProject?.id}
+            </div>
+            <div className='flex flex-wrap gap-2 text-xs'>
+              <Badge variant='secondary'>{totals.projects} 项目</Badge>
+              <Badge variant='outline'>{totals.elements} 元素</Badge>
+              <Badge variant='outline'>{totals.views} 视图</Badge>
+              <Badge variant='outline'>{totals.documents} 文档</Badge>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {recentProjects.length ? (
+            <div className='divide-y divide-border/50'>
+              {recentProjects.map((project) => {
+                const active = project.id === currentProject?.id
+                return (
+                  <button
+                    key={project.id}
+                    type='button'
+                    onClick={() => {
+                      onSelectProject(project.id)
+                      onOpenWorkspace()
+                    }}
+                    className={cn(
+                      'flex w-full items-center justify-between gap-4 py-4 text-left transition-colors hover:bg-muted/25',
+                      active && 'text-primary'
+                    )}
+                  >
+                    <div className='min-w-0'>
+                      <div className='flex items-center gap-2'>
+                        <span className='truncate font-semibold'>
+                          {project.name || project.id}
+                        </span>
+                        {active ? <Badge>当前</Badge> : null}
+                      </div>
+                      <p className='mt-1 line-clamp-1 text-sm text-muted-foreground'>
+                        {project.description || project.organization || 'No description yet'}
+                      </p>
                     </div>
-                    <div className='mt-1 text-xs text-muted-foreground'>
-                      {currentProject?.organization || 'No organization'} / branch {currentBranch}
+                    <div className='hidden shrink-0 gap-3 text-xs text-muted-foreground sm:flex'>
+                      <span>{project.elements || 0} 元素</span>
+                      <span>{project.views || 0} 视图</span>
+                      <span>{project.documents || 0} 文档</span>
                     </div>
-                  </div>
-                  <div className='grid gap-2'>
-                    <Button onClick={onOpenProject}>
-                      <LayoutDashboard className='size-4' />
-                      进入模型工作台
-                    </Button>
-                    <Button variant='outline' onClick={onGoToMdk}>
-                      <Upload className='size-4' />
-                      导入外部模型
-                    </Button>
-                    <Button variant='outline' onClick={onGoToViews}>
-                      <Archive className='size-4' />
-                      创建 View
-                    </Button>
-                    <Button variant='outline' onClick={onGoToDocs}>
-                      <FileText className='size-4' />
-                      生成文档
-                    </Button>
-                  </div>
-                </>
-              ) : (
-                <EmptyState
-                  title='未选择项目'
-                  description='选择一个项目，或到 Projects 新建项目。'
-                />
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      </div>
+                  </button>
+                )
+              })}
+            </div>
+          ) : (
+            <EmptyState
+              title='还没有项目'
+              description='进入工作区创建项目，再导入或编辑模型。'
+            />
+          )}
+        </CardContent>
+      </Card>
 
-      <div className='space-y-4'>
-        <Card className='sysml-card'>
-          <CardHeader>
-            <CardTitle>风险和待办</CardTitle>
-            <CardDescription>当前项目的快速健康检查。</CardDescription>
-          </CardHeader>
-          <CardContent className='space-y-3'>
-            <Alert variant={validationCount ? 'destructive' : 'default'}>
+      <Card className='sysml-card self-start'>
+        <CardHeader>
+          <CardTitle>风险摘要</CardTitle>
+          <CardDescription>只保留需要你注意的信号。</CardDescription>
+        </CardHeader>
+        <CardContent className='space-y-4'>
+          <div
+            className={cn(
+              'rounded-3xl p-4',
+              validationCount ? 'bg-amber-50 dark:bg-amber-950/25' : 'bg-emerald-50 dark:bg-emerald-950/25'
+            )}
+          >
+            <div className='flex items-start gap-3'>
               {validationCount ? (
-                <AlertCircle className='size-4' />
+                <AlertCircle className='mt-0.5 size-5 text-amber-600' />
               ) : (
-                <CheckCircle2 className='size-4' />
+                <CheckCircle2 className='mt-0.5 size-5 text-emerald-600' />
               )}
-              <AlertTitle>
-                {validationCount ? '当前项目需要处理校验问题' : '当前项目校验通过'}
-              </AlertTitle>
-              <AlertDescription>
-                {validationCount
-                  ? `${validation?.summary.errors || 0} 个错误，${validation?.summary.warnings || 0} 个警告。`
-                  : '未发现错误或警告。'}
-              </AlertDescription>
-            </Alert>
-            <NextStep
-              title='如果是新项目'
-              description='先到 MDK 导入模型，或在 Model 手动创建第一个需求/模块。'
-            />
-            <NextStep
-              title='如果要汇报'
-              description='先创建 View，把范围收窄，再到 Docs 按 View 生成文档。'
-            />
-            <NextStep
-              title='如果要冻结状态'
-              description='到 Versions 提交版本，再创建标签基线。'
-            />
-          </CardContent>
-        </Card>
-      </div>
-    </div>
-  )
-}
+              <div>
+                <div className='font-semibold'>
+                  {validationCount ? '存在待检查项' : '当前项目状态良好'}
+                </div>
+                <p className='mt-1 text-sm text-muted-foreground'>
+                  {validationCount
+                    ? `${validation?.summary.errors || 0} 个错误，${validation?.summary.warnings || 0} 个警告。`
+                    : '未发现错误或警告。'}
+                </p>
+              </div>
+            </div>
+          </div>
 
-function PortfolioMetric({
-  label,
-  value,
-  detail,
-  icon: Icon,
-}: {
-  label: string
-  value: number
-  detail: string
-  icon: typeof Boxes
-}) {
-  return (
-    <div className='rounded-lg border bg-background p-4'>
-      <div className='flex items-center justify-between gap-3'>
-        <div className='text-sm font-medium'>{label}</div>
-        <Icon className='size-4 text-muted-foreground' />
-      </div>
-      <div className='mt-3 text-3xl font-semibold'>{value}</div>
-      <div className='mt-1 text-xs text-muted-foreground'>{detail}</div>
-    </div>
-  )
-}
-
-function NextStep({
-  title,
-  description,
-}: {
-  title: string
-  description: string
-}) {
-  return (
-    <div className='rounded-md border bg-muted/20 p-3'>
-      <div className='text-sm font-semibold'>{title}</div>
-      <p className='mt-1 text-xs text-muted-foreground'>{description}</p>
+          <div className='space-y-2 text-sm text-muted-foreground'>
+            <p>新项目：进入“项目管理”创建项目，再到工作区选择“外部导入”或“模型”。</p>
+            <p>要汇报：进入“视图”圈定范围，再生成“文档”。</p>
+            <p>要冻结：进入“版本”提交并创建标签基线。</p>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   )
 }
@@ -2682,19 +3557,15 @@ function NextStep({
 function ProjectsTab({
   projects,
   currentProjectId,
-  branches,
-  currentBranch,
   newProject,
   setNewProject,
   onSelectProject,
+  onOpenWorkspace,
   onCreateProject,
-  onOpenWorkbench,
   busy,
 }: {
   projects: Project[]
   currentProjectId: string
-  branches: Branch[]
-  currentBranch: string
   newProject: {
     id: string
     name: string
@@ -2708,11 +3579,10 @@ function ProjectsTab({
     description: string
   }) => void
   onSelectProject: (projectId: string) => void
+  onOpenWorkspace: () => void
   onCreateProject: () => void
-  onOpenWorkbench: () => void
   busy: string
 }) {
-  const currentProject = projects.find((project) => project.id === currentProjectId)
   const totalElements = projects.reduce((sum, project) => sum + (project.elements || 0), 0)
   const totalDocuments = projects.reduce((sum, project) => sum + (project.documents || 0), 0)
   const totalViews = projects.reduce((sum, project) => sum + (project.views || 0), 0)
@@ -2725,196 +3595,153 @@ function ProjectsTab({
   }
 
   return (
-    <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]'>
-      <div className='space-y-4'>
-        <Card className='sysml-card'>
-          <CardHeader>
-            <div className='flex flex-col gap-3 md:flex-row md:items-center md:justify-between'>
-              <div>
-                <CardTitle>项目管理</CardTitle>
-                <CardDescription>
-                  这里负责创建、选择和打开项目；真正的统筹信息在 Overview。
-                </CardDescription>
-              </div>
-              <div className='flex flex-wrap gap-2'>
-                <Badge variant='secondary'>{projects.length} projects</Badge>
-                <Badge variant='outline'>{totalElements} elements</Badge>
-                <Badge variant='outline'>{totalViews} views</Badge>
-                <Badge variant='outline'>{totalDocuments} docs</Badge>
-              </div>
+    <div className='space-y-4'>
+      <Card className='sysml-card overflow-hidden'>
+        <CardHeader className='bg-muted/20'>
+          <div className='flex flex-col gap-3 md:flex-row md:items-center md:justify-between'>
+            <div>
+              <CardTitle>项目管理</CardTitle>
+              <CardDescription>
+                选择项目进入工作区；新建项目放在弹窗里，避免干扰日常浏览。
+              </CardDescription>
             </div>
-          </CardHeader>
-          <CardContent>
-            {projects.length ? (
-              <div className='grid gap-3 lg:grid-cols-2'>
-                {projects.map((project) => {
-                  const active = project.id === currentProjectId
-                  return (
-                    <button
-                      key={project.id}
-                      type='button'
-                      onClick={() => onSelectProject(project.id)}
-                      className={cn(
-                        'rounded-lg border bg-background p-4 text-left transition hover:border-primary hover:bg-muted/30',
-                        active && 'border-primary bg-primary/5'
-                      )}
+            <div className='flex flex-wrap items-center gap-2'>
+              <Badge variant='secondary'>{projects.length} projects</Badge>
+              <Badge variant='outline'>{totalElements} elements</Badge>
+              <Badge variant='outline'>{totalViews} views</Badge>
+              <Badge variant='outline'>{totalDocuments} docs</Badge>
+              <Dialog>
+                <DialogTrigger asChild>
+                  <Button size='sm'>
+                    <Plus className='size-4' />
+                    新建项目
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className='sm:max-w-xl'>
+                  <DialogHeader>
+                    <DialogTitle>新建项目</DialogTitle>
+                    <DialogDescription>
+                      创建后会自动拥有独立的 main 分支、提交记录和后续文档空间。
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className='grid gap-4'>
+                    <Field label='项目名称'>
+                      <Input
+                        value={newProject.name}
+                        onChange={(event) =>
+                          updateNewProject('name', event.target.value)
+                        }
+                        placeholder='例如：火星探测器电源系统'
+                      />
+                    </Field>
+                    <Field label='项目 ID'>
+                      <Input
+                        value={newProject.id}
+                        onChange={(event) =>
+                          updateNewProject('id', event.target.value)
+                        }
+                        placeholder='留空则自动根据名称生成'
+                      />
+                    </Field>
+                    <Field label='组织 / 团队'>
+                      <Input
+                        value={newProject.organization}
+                        onChange={(event) =>
+                          updateNewProject('organization', event.target.value)
+                        }
+                        placeholder='例如：总体设计组'
+                      />
+                    </Field>
+                    <Field label='说明'>
+                      <Textarea
+                        rows={4}
+                        value={newProject.description}
+                        onChange={(event) =>
+                          updateNewProject('description', event.target.value)
+                        }
+                        placeholder='这个项目要管理什么系统、什么阶段、谁来维护。'
+                      />
+                    </Field>
+                    <Button
+                      onClick={onCreateProject}
+                      disabled={busy === 'create-project'}
                     >
-                      <div className='flex items-start justify-between gap-3'>
-                        <div className='min-w-0'>
-                          <div className='font-mono text-xs text-muted-foreground'>
-                            {project.id}
-                          </div>
-                          <div className='mt-1 truncate text-lg font-semibold'>
-                            {project.name || project.id}
-                          </div>
-                          <p className='mt-1 line-clamp-2 text-sm text-muted-foreground'>
-                            {project.description || 'No description yet'}
-                          </p>
-                        </div>
-                        <Badge variant={active ? 'default' : 'secondary'}>
-                          {active ? '当前项目' : '打开'}
-                        </Badge>
-                      </div>
-                      <div className='mt-4 grid grid-cols-4 gap-2 text-center text-xs'>
-                        <ProjectStat value={project.branches || 0} label='分支' />
-                        <ProjectStat value={project.elements || 0} label='元素' />
-                        <ProjectStat value={project.views || 0} label='视图' />
-                        <ProjectStat value={project.documents || 0} label='文档' />
-                      </div>
-                      <div className='mt-3 text-xs text-muted-foreground'>
-                        {project.organization || 'No organization'} / updated{' '}
-                        {project.updated_at || '-'}
-                      </div>
-                    </button>
-                  )
-                })}
-              </div>
-            ) : (
-              <EmptyState
-                title='还没有项目'
-                description='先创建一个项目，再导入模型或手动创建 SysML 元素。'
-              />
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className='sysml-card'>
-          <CardHeader>
-            <div className='flex items-center justify-between gap-3'>
-              <div>
-                <CardTitle>当前项目工作区</CardTitle>
-                <CardDescription>
-                  切换项目后，模型、分支、文档和 View 都会跟着切换。
-                </CardDescription>
-              </div>
-              <Button onClick={onOpenWorkbench} disabled={!currentProjectId}>
-                打开模型工作台
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent>
-            {currentProject ? (
-              <div className='space-y-4'>
-                <div className='rounded-md border bg-muted/20 p-4'>
-                  <div className='text-sm text-muted-foreground'>当前项目</div>
-                  <div className='mt-1 text-xl font-semibold'>
-                    {currentProject.name || currentProject.id}
-                  </div>
-                  <p className='mt-1 text-sm text-muted-foreground'>
-                    {currentProject.organization || 'No organization'} / branch {currentBranch}
-                  </p>
-                </div>
-                <div className='grid gap-3 md:grid-cols-2 xl:grid-cols-3'>
-                  {branches.map((item) => (
-                    <div
-                      key={item.name}
-                      className={cn(
-                        'rounded-md border bg-background p-3',
-                        item.name === currentBranch && 'border-primary bg-primary/5'
+                      {busy === 'create-project' ? (
+                        <Loader2 className='size-4 animate-spin' />
+                      ) : (
+                        <Plus className='size-4' />
                       )}
-                    >
-                      <div className='flex items-center justify-between gap-2'>
-                        <div className='font-medium'>{item.name}</div>
-                        {item.name === currentBranch && (
-                          <Badge variant='secondary'>current</Badge>
-                        )}
-                      </div>
-                      <div className='mt-2 text-xs text-muted-foreground'>
-                        {item.elements || 0} elements / {item.documents || 0} docs
-                      </div>
-                      <div className='mt-1 truncate font-mono text-xs text-muted-foreground'>
-                        {item.head || 'working'}
-                      </div>
+                      创建并打开项目
+                    </Button>
+                    <div className='rounded-2xl bg-muted/30 p-3 text-xs text-muted-foreground'>
+                      新项目是空模型。后续可以在 Model 手动建元素，或到 MDK 上传 JSON/XMI/MATLAB/Jupyter 文件导入。
                     </div>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <EmptyState
-                title='未选择项目'
-                description='从项目列表中选择一个项目，或在右侧创建新项目。'
-              />
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      <Card className='sysml-card self-start'>
-        <CardHeader>
-          <CardTitle>新建项目</CardTitle>
-          <CardDescription>
-            创建后会自动拥有独立的 main 分支、提交记录和后续文档空间。
-          </CardDescription>
-        </CardHeader>
-        <CardContent className='space-y-4'>
-          <Field label='项目名称'>
-            <Input
-              value={newProject.name}
-              onChange={(event) => updateNewProject('name', event.target.value)}
-              placeholder='例如：火星探测器电源系统'
-            />
-          </Field>
-          <Field label='项目 ID'>
-            <Input
-              value={newProject.id}
-              onChange={(event) => updateNewProject('id', event.target.value)}
-              placeholder='留空则自动根据名称生成'
-            />
-          </Field>
-          <Field label='组织 / 团队'>
-            <Input
-              value={newProject.organization}
-              onChange={(event) =>
-                updateNewProject('organization', event.target.value)
-              }
-              placeholder='例如：总体设计组'
-            />
-          </Field>
-          <Field label='说明'>
-            <Textarea
-              rows={4}
-              value={newProject.description}
-              onChange={(event) =>
-                updateNewProject('description', event.target.value)
-              }
-              placeholder='这个项目要管理什么系统、什么阶段、谁来维护。'
-            />
-          </Field>
-          <Button
-            className='w-full'
-            onClick={onCreateProject}
-            disabled={busy === 'create-project'}
-          >
-            {busy === 'create-project' ? (
-              <Loader2 className='size-4 animate-spin' />
-            ) : (
-              <Plus className='size-4' />
-            )}
-            创建并打开项目
-          </Button>
-          <div className='rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground'>
-            新项目是空模型。后续可以在 Model 里手动建元素，或到 MDK 页上传 JSON/XMI/MATLAB/Jupyter 文件导入。
+                  </div>
+                </DialogContent>
+              </Dialog>
+            </div>
           </div>
+        </CardHeader>
+        <CardContent className='p-4'>
+          {projects.length ? (
+            <div className='grid gap-3 lg:grid-cols-2'>
+              {projects.map((project) => {
+                const active = project.id === currentProjectId
+                return (
+                  <button
+                    key={project.id}
+                    type='button'
+                    onClick={() => {
+                      onSelectProject(project.id)
+                      onOpenWorkspace()
+                    }}
+                    className={cn(
+                      'relative rounded-2xl bg-muted/25 p-4 text-left transition hover:bg-muted/45',
+                      active && 'bg-background shadow-sm ring-1 ring-primary/25'
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        'absolute left-0 top-4 h-12 w-1 rounded-full bg-transparent',
+                        active && 'bg-primary'
+                      )}
+                    />
+                    <div className='flex items-start justify-between gap-3'>
+                      <div className='min-w-0'>
+                        <div className='font-mono text-xs text-muted-foreground'>
+                          {project.id}
+                        </div>
+                        <div className='mt-1 truncate text-lg font-semibold'>
+                          {project.name || project.id}
+                        </div>
+                        <p className='mt-1 line-clamp-2 text-sm text-muted-foreground'>
+                          {project.description || 'No description yet'}
+                        </p>
+                      </div>
+                      <Badge variant={active ? 'default' : 'secondary'}>
+                        {active ? '当前项目' : '打开项目'}
+                      </Badge>
+                    </div>
+                    <div className='mt-4 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground'>
+                      <ProjectStat value={project.branches || 0} label='分支' />
+                      <ProjectStat value={project.elements || 0} label='元素' />
+                      <ProjectStat value={project.views || 0} label='视图' />
+                      <ProjectStat value={project.documents || 0} label='文档' />
+                    </div>
+                    <div className='mt-3 text-xs text-muted-foreground'>
+                      {project.organization || 'No organization'} / updated{' '}
+                      {project.updated_at || '-'}
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          ) : (
+            <EmptyState
+              title='还没有项目'
+              description='先创建一个项目，再导入模型或手动创建 SysML 元素。'
+            />
+          )}
         </CardContent>
       </Card>
     </div>
@@ -2923,10 +3750,9 @@ function ProjectsTab({
 
 function ProjectStat({ value, label }: { value: number; label: string }) {
   return (
-    <div className='rounded-md bg-muted/40 p-2'>
-      <div className='font-semibold'>{value}</div>
-      <div className='text-muted-foreground'>{label}</div>
-    </div>
+    <span>
+      <strong className='font-semibold text-foreground'>{value}</strong> {label}
+    </span>
   )
 }
 
@@ -3580,130 +4406,137 @@ function ViewsTab({
   busy: string
   onAiReview: () => void
 }) {
+  const isView = form.type === 'View'
+  const isViewpoint = form.type === 'Viewpoint'
+  const hasLibraryItems = views.length > 0 || viewpoints.length > 0
+
   return (
-    <div className='grid gap-4 xl:grid-cols-[420px_minmax(0,1fr)]'>
-      <Card className='sysml-card self-start'>
-        <CardHeader>
+    <div className='grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]'>
+      <Card className='sysml-card self-start overflow-hidden'>
+        <CardHeader className='bg-muted/20'>
           <div className='flex items-center justify-between gap-3'>
             <div>
-              <CardTitle>Views</CardTitle>
+              <CardTitle>View Library</CardTitle>
               <CardDescription>
-                First-class model views for scoped Graph and Docs output.
+                先管理 View，再需要时维护 Viewpoint 模板。
               </CardDescription>
             </div>
             <div className='flex flex-wrap gap-2'>
-              <Button size='sm' variant='outline' onClick={onNewViewpoint}>
-                <Plus className='size-4' />
-                New Viewpoint
-              </Button>
               <Button size='sm' variant='outline' onClick={onNewView}>
                 <Plus className='size-4' />
                 New View
               </Button>
+              <Button size='sm' variant='ghost' onClick={onNewViewpoint}>
+                Viewpoint
+              </Button>
             </div>
           </div>
         </CardHeader>
-        <CardContent className='space-y-4'>
-          <div>
-            <div className='mb-2 flex items-center justify-between gap-2'>
-              <div className='text-sm font-semibold'>Viewpoints</div>
-              <Badge variant='outline'>{viewpoints.length}</Badge>
-            </div>
-            {viewpoints.length ? (
-              <div className='grid gap-2 md:grid-cols-2'>
-                {viewpoints.map((viewpoint) => {
-                  const attributes = viewpoint.attributes || {}
-                  return (
-                    <button
-                      key={viewpoint.id}
-                      type='button'
-                      onClick={() => setSelectedId(viewpoint.id)}
-                      className={cn(
-                        'rounded-md border p-3 text-left transition-colors hover:bg-muted/60',
-                        selectedId === viewpoint.id && 'border-primary bg-muted'
-                      )}
-                    >
-                      <div className='flex items-center justify-between gap-2'>
-                        <span className='font-mono text-sm font-semibold'>
-                          {viewpoint.id}
-                        </span>
-                        <Badge variant='secondary'>Viewpoint</Badge>
-                      </div>
-                      <div className='mt-1 text-sm font-medium'>
-                        {viewpoint.name || viewpoint.id}
-                      </div>
-                      <p className='mt-1 line-clamp-2 text-xs text-muted-foreground'>
-                        {String(attributes.purpose || viewpoint.description || 'No purpose yet')}
-                      </p>
-                    </button>
-                  )
-                })}
+        <CardContent className='p-3'>
+          {hasLibraryItems ? (
+            <Tabs defaultValue='views' className='space-y-3'>
+              <TabsList className='grid w-full grid-cols-2 rounded-full bg-muted/60 p-1'>
+                <TabsTrigger value='views'>Views {views.length}</TabsTrigger>
+                <TabsTrigger value='viewpoints'>
+                  Viewpoints {viewpoints.length}
+                </TabsTrigger>
+              </TabsList>
+              <TabsContent value='views' className='mt-0 space-y-2'>
+                {views.length ? (
+                  views.map((view) => {
+                    const attributes = view.attributes || {}
+                    const included = Array.isArray(attributes.included_elements)
+                      ? attributes.included_elements.length
+                      : 0
+                    return (
+                      <ViewLibraryItem
+                        key={view.id}
+                        id={view.id}
+                        title={view.name || view.id}
+                        description={`${String(attributes.viewpoint || 'General viewpoint')} / ${view.description || 'No description'}`}
+                        badge={`${included} linked`}
+                        active={selectedId === view.id}
+                        onClick={() => setSelectedId(view.id)}
+                      />
+                    )
+                  })
+                ) : (
+                  <ViewLibraryEmpty
+                    title='还没有 View'
+                    description='创建 View 后可以绑定元素，并驱动 Graph 和 Docs 输出。'
+                    action='创建 View'
+                    onAction={onNewView}
+                  />
+                )}
+              </TabsContent>
+              <TabsContent value='viewpoints' className='mt-0 space-y-2'>
+                {viewpoints.length ? (
+                  viewpoints.map((viewpoint) => {
+                    const attributes = viewpoint.attributes || {}
+                    return (
+                      <ViewLibraryItem
+                        key={viewpoint.id}
+                        id={viewpoint.id}
+                        title={viewpoint.name || viewpoint.id}
+                        description={String(
+                          attributes.purpose ||
+                            viewpoint.description ||
+                            'No purpose yet'
+                        )}
+                        badge='template'
+                        active={selectedId === viewpoint.id}
+                        onClick={() => setSelectedId(viewpoint.id)}
+                      />
+                    )
+                  })
+                ) : (
+                  <ViewLibraryEmpty
+                    title='还没有 Viewpoint'
+                    description='Viewpoint 是 View 的模板，用来定义默认查询和文档规则。'
+                    action='创建 Viewpoint'
+                    onAction={onNewViewpoint}
+                  />
+                )}
+              </TabsContent>
+            </Tabs>
+          ) : (
+            <div className='rounded-2xl bg-muted/25 p-4'>
+              <div className='text-sm font-semibold'>从一个 View 开始</div>
+              <p className='mt-1 text-xs text-muted-foreground'>
+                建议流程：创建 Viewpoint 模板，创建 View，绑定元素，再生成 Graph 或 Docs。
+              </p>
+              <div className='mt-4 grid gap-2'>
+                <Button onClick={onNewView}>
+                  <Plus className='size-4' />
+                  创建 View
+                </Button>
+                <Button variant='outline' onClick={onNewViewpoint}>
+                  创建 Viewpoint
+                </Button>
               </div>
-            ) : (
-              <EmptyState
-                title='No Viewpoints yet'
-                description='Create a Viewpoint first, then select it in a View.'
-              />
-            )}
-          </div>
-          <Separator />
-          <div>
-            <div className='mb-2 flex items-center justify-between gap-2'>
-              <div className='text-sm font-semibold'>Views</div>
-              <Badge variant='outline'>{views.length}</Badge>
             </div>
-            {views.length ? (
-              <div className='grid gap-2 md:grid-cols-2'>
-                {views.map((view) => {
-                  const attributes = view.attributes || {}
-                  const included = Array.isArray(attributes.included_elements)
-                    ? attributes.included_elements.length
-                    : 0
-                  return (
-                    <button
-                      key={view.id}
-                      type='button'
-                      onClick={() => setSelectedId(view.id)}
-                      className={cn(
-                        'rounded-md border p-3 text-left transition-colors hover:bg-muted/60',
-                        selectedId === view.id && 'border-primary bg-muted'
-                      )}
-                    >
-                      <div className='flex items-center justify-between gap-2'>
-                        <span className='font-mono text-sm font-semibold'>
-                          {view.id}
-                        </span>
-                        <Badge variant='secondary'>{included} linked</Badge>
-                      </div>
-                      <div className='mt-1 text-sm font-medium'>
-                        {view.name || view.id}
-                      </div>
-                      <p className='mt-1 line-clamp-2 text-xs text-muted-foreground'>
-                        {String(attributes.viewpoint || 'General viewpoint')} /{' '}
-                        {view.description || 'No description'}
-                      </p>
-                    </button>
-                  )
-                })}
-              </div>
-            ) : (
-              <EmptyState
-                title='No Views yet'
-                description='Create a View to bind elements and drive scoped Graph/Docs output.'
-              />
-            )}
-          </div>
+          )}
         </CardContent>
       </Card>
 
       <div className='space-y-4'>
-        <Card className='sysml-card'>
-        <CardHeader>
+        <Card className='sysml-card overflow-hidden'>
+        <CardHeader className='bg-muted/20'>
           <div className='flex items-center justify-between gap-3'>
             <div>
-              <CardTitle>View Studio</CardTitle>
+              <CardTitle>
+                {isView
+                  ? 'View Editor'
+                  : isViewpoint
+                    ? 'Viewpoint Template'
+                    : 'View Studio'}
+              </CardTitle>
               <CardDescription>
-                Dedicated controls for View and Viewpoint configuration.
+                {isView
+                  ? '编辑视图范围、绑定元素，并用于 Graph / Docs。'
+                  : isViewpoint
+                    ? '维护视图模板、默认查询和文档规则。'
+                    : '选择一个 View 或 Viewpoint，或按流程创建新的视图。'}
               </CardDescription>
             </div>
             <div className='flex items-center gap-2'>
@@ -3726,7 +4559,7 @@ function ViewsTab({
             </div>
             </div>
           </CardHeader>
-        <CardContent>
+        <CardContent className='p-4'>
           {form.type === 'View' ? (
             <ViewDefinitionPanel
               elements={bindableElements}
@@ -3745,17 +4578,152 @@ function ViewsTab({
                 onUpdateAttributes={onUpdateViewAttributes}
               />
             ) : (
-              <EmptyState
-                title='Select a View or Viewpoint'
-                description='Specialized View editing lives here, separate from normal element fields.'
+              <ViewStudioEmpty
+                onNewView={onNewView}
+                onNewViewpoint={onNewViewpoint}
               />
             )}
           </CardContent>
         </Card>
 
-        <ValidationPanel validation={validation} />
+        <ViewValidationBar validation={validation} />
         <AiModelReviewPanel review={aiReview} busy={busy} onReview={onAiReview} />
       </div>
+    </div>
+  )
+}
+
+function ViewLibraryItem({
+  id,
+  title,
+  description,
+  badge,
+  active,
+  onClick,
+}: {
+  id: string
+  title: string
+  description: string
+  badge: string
+  active: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type='button'
+      onClick={onClick}
+      className={cn(
+        'relative w-full rounded-2xl bg-muted/25 p-3 text-left transition-colors hover:bg-muted/45',
+        active && 'bg-background shadow-sm ring-1 ring-primary/20'
+      )}
+    >
+      <span
+        className={cn(
+          'absolute left-0 top-3 h-10 w-1 rounded-full bg-transparent',
+          active && 'bg-primary'
+        )}
+      />
+      <div className='flex items-start justify-between gap-3'>
+        <div className='min-w-0'>
+          <div className='font-mono text-xs text-muted-foreground'>{id}</div>
+          <div className='mt-1 truncate text-sm font-semibold'>{title}</div>
+        </div>
+        <Badge variant='secondary'>{badge}</Badge>
+      </div>
+      <p className='mt-2 line-clamp-2 text-xs text-muted-foreground'>
+        {description}
+      </p>
+    </button>
+  )
+}
+
+function ViewLibraryEmpty({
+  title,
+  description,
+  action,
+  onAction,
+}: {
+  title: string
+  description: string
+  action: string
+  onAction: () => void
+}) {
+  return (
+    <div className='rounded-2xl bg-muted/25 p-4 text-sm'>
+      <div className='font-semibold'>{title}</div>
+      <p className='mt-1 text-xs text-muted-foreground'>{description}</p>
+      <Button size='sm' className='mt-3' variant='outline' onClick={onAction}>
+        <Plus className='size-4' />
+        {action}
+      </Button>
+    </div>
+  )
+}
+
+function ViewStudioEmpty({
+  onNewView,
+  onNewViewpoint,
+}: {
+  onNewView: () => void
+  onNewViewpoint: () => void
+}) {
+  return (
+    <div className='grid gap-4 rounded-2xl bg-muted/25 p-5 md:grid-cols-[1fr_auto]'>
+      <div>
+        <h3 className='text-base font-semibold'>还没有选择 View</h3>
+        <p className='mt-2 text-sm text-muted-foreground'>
+          普通用户优先创建 View：选择范围、绑定元素，然后用于 Graph 和 Docs。
+          Viewpoint 是高级模板，用来定义默认规则。
+        </p>
+        <div className='mt-4 grid gap-2 text-sm text-muted-foreground sm:grid-cols-4'>
+          <span>1. 创建 Viewpoint</span>
+          <span>2. 创建 View</span>
+          <span>3. 绑定元素</span>
+          <span>4. 生成输出</span>
+        </div>
+      </div>
+      <div className='flex min-w-[180px] flex-col gap-2'>
+        <Button onClick={onNewView}>
+          <Plus className='size-4' />
+          创建 View
+        </Button>
+        <Button variant='outline' onClick={onNewViewpoint}>
+          创建 Viewpoint
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function ViewValidationBar({
+  validation,
+}: {
+  validation: ValidationPayload | null
+}) {
+  const errors = validation?.summary.errors || 0
+  const warnings = validation?.summary.warnings || 0
+  const hasIssues = errors + warnings > 0
+
+  return (
+    <div
+      className={cn(
+        'flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-muted/25 px-4 py-3 text-sm',
+        hasIssues && 'bg-destructive/10'
+      )}
+    >
+      <div className='flex items-center gap-2'>
+        {hasIssues ? (
+          <AlertCircle className='size-4 text-destructive' />
+        ) : (
+          <CheckCircle2 className='size-4 text-emerald-600' />
+        )}
+        <span className='font-medium'>
+          {hasIssues ? 'View 校验存在问题' : 'View 校验通过'}
+        </span>
+      </div>
+      <span className='text-xs text-muted-foreground'>
+        {errors} 个错误，{warnings} 个警告
+      </span>
     </div>
   )
 }
@@ -3816,15 +4784,15 @@ function ViewpointDefinitionPanel({
       : '自定义模板'
 
   return (
-    <Card className='border-dashed bg-muted/20'>
-      <CardHeader className='pb-3'>
+    <div className='rounded-2xl bg-muted/20 p-4'>
+      <div className='pb-3'>
         <CardTitle className='text-base'>Viewpoint Setup</CardTitle>
         <CardDescription>
           Pick a review scenario first. Advanced rules and document templates stay
           available when you need precise control.
         </CardDescription>
-      </CardHeader>
-      <CardContent className='space-y-5'>
+      </div>
+      <div className='space-y-5'>
         <Field label='Purpose'>
           <Textarea
             rows={3}
@@ -3834,7 +4802,7 @@ function ViewpointDefinitionPanel({
           />
         </Field>
 
-        <div className='rounded-md border bg-background p-4'>
+        <div className='rounded-2xl bg-background/70 p-4'>
           <div className='mb-3 flex flex-wrap items-center justify-between gap-3'>
             <div>
               <div className='text-sm font-semibold'>选择一个常用场景</div>
@@ -3849,7 +4817,7 @@ function ViewpointDefinitionPanel({
               <button
                 key={preset.key}
                 type='button'
-                className='rounded-lg border bg-muted/20 p-3 text-left transition hover:border-primary hover:bg-background'
+                className='rounded-2xl bg-muted/30 p-3 text-left transition hover:bg-muted/50'
                 onClick={() => applyPreset(preset)}
               >
                 <div className='font-medium'>{preset.label}</div>
@@ -3862,7 +4830,7 @@ function ViewpointDefinitionPanel({
         </div>
 
         <div className='grid gap-4 lg:grid-cols-3'>
-          <div className='rounded-md border bg-background p-4'>
+          <div className='rounded-2xl bg-background/70 p-4'>
             <div className='text-sm font-semibold'>规则摘要</div>
             <div className='mt-3 space-y-2 text-sm text-muted-foreground'>
               {ruleSummary.map((line) => (
@@ -3870,7 +4838,7 @@ function ViewpointDefinitionPanel({
               ))}
             </div>
           </div>
-          <div className='rounded-md border bg-background p-4'>
+          <div className='rounded-2xl bg-background/70 p-4'>
             <div className='text-sm font-semibold'>默认查询</div>
             <div className='mt-3 space-y-2 text-sm text-muted-foreground'>
               {querySummary.map((line) => (
@@ -3878,7 +4846,7 @@ function ViewpointDefinitionPanel({
               ))}
             </div>
           </div>
-          <div className='rounded-md border bg-background p-4'>
+          <div className='rounded-2xl bg-background/70 p-4'>
             <div className='text-sm font-semibold'>文档输出</div>
             <div className='mt-3 text-sm text-muted-foreground'>{templateLabel}</div>
             <div className='mt-3 flex flex-wrap gap-2'>
@@ -3915,7 +4883,7 @@ function ViewpointDefinitionPanel({
         </div>
 
         {showAdvanced && (
-          <div className='space-y-5 rounded-md border bg-background p-4'>
+          <div className='space-y-5 rounded-2xl bg-background/70 p-4'>
             <div>
               <div className='text-sm font-semibold'>Advanced Rules</div>
               <p className='text-xs text-muted-foreground'>
@@ -4038,8 +5006,8 @@ function ViewpointDefinitionPanel({
             </div>
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   )
 }
 
@@ -4979,9 +5947,13 @@ function TraceTab({
   busy: string
   onRefresh: () => void
 }) {
+  const closedCount = traceability.filter((row) => row.status === 'closed').length
+  const partialCount = traceability.filter((row) => row.status === 'partial').length
+  const openCount = traceability.length - closedCount - partialCount
+
   return (
-    <Card className='sysml-card'>
-      <CardHeader>
+    <Card className='sysml-card overflow-hidden'>
+      <CardHeader className='bg-muted/20'>
         <div className='flex items-center justify-between gap-3'>
           <div>
             <CardTitle>需求追踪矩阵</CardTitle>
@@ -4997,39 +5969,37 @@ function TraceTab({
           </Button>
         </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className='space-y-4 p-4'>
+        <div className='grid gap-3 md:grid-cols-4'>
+          <TraceSummaryTile label='需求' value={traceability.length} />
+          <TraceSummaryTile label='已闭环' value={closedCount} tone='success' />
+          <TraceSummaryTile label='部分闭环' value={partialCount} tone='warning' />
+          <TraceSummaryTile label='未闭环' value={openCount} tone='danger' />
+        </div>
         {traceability.length ? (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>需求</TableHead>
-                <TableHead>满足元素</TableHead>
-                <TableHead>验证元素</TableHead>
-                <TableHead>约束</TableHead>
-                <TableHead>状态</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {traceability.map((row) => (
-                <TableRow key={row.requirement.id}>
-                  <TableCell>
-                    <div className='font-mono font-medium'>
-                      {row.requirement.id}
-                    </div>
-                    <div className='text-muted-foreground'>
-                      {row.requirement.name}
-                    </div>
-                  </TableCell>
-                  <TableCell>{formatRefs(row.satisfied_by)}</TableCell>
-                  <TableCell>{formatRefs(row.verified_by)}</TableCell>
-                  <TableCell>{formatRefs(row.constrained_by || [])}</TableCell>
-                  <TableCell>
-                    <TraceBadge status={row.status} />
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <div className='divide-y rounded-2xl bg-muted/25'>
+            {traceability.map((row) => (
+              <div
+                key={row.requirement.id}
+                className='grid gap-4 p-4 lg:grid-cols-[minmax(220px,1.2fr)_repeat(3,minmax(0,1fr))_auto]'
+              >
+                <div className='min-w-0'>
+                  <div className='font-mono text-sm font-semibold'>
+                    {row.requirement.id}
+                  </div>
+                  <div className='mt-1 truncate text-sm text-muted-foreground'>
+                    {row.requirement.name}
+                  </div>
+                </div>
+                <TraceRefBlock label='满足' refs={row.satisfied_by} />
+                <TraceRefBlock label='验证' refs={row.verified_by} />
+                <TraceRefBlock label='约束' refs={row.constrained_by || []} />
+                <div className='flex items-start justify-end'>
+                  <TraceBadge status={row.status} />
+                </div>
+              </div>
+            ))}
+          </div>
         ) : (
           <EmptyState title='暂无追踪数据' description='点击刷新加载追踪矩阵' />
         )}
@@ -5038,7 +6008,49 @@ function TraceTab({
   )
 }
 
+function TraceSummaryTile({
+  label,
+  value,
+  tone = 'default',
+}: {
+  label: string
+  value: number
+  tone?: 'default' | 'success' | 'warning' | 'danger'
+}) {
+  return (
+    <div
+      className={cn(
+        'rounded-2xl bg-muted/35 p-4',
+        tone === 'success' && 'bg-emerald-500/10 text-emerald-700',
+        tone === 'warning' && 'bg-amber-500/10 text-amber-700',
+        tone === 'danger' && value > 0 && 'bg-destructive/10 text-destructive'
+      )}
+    >
+      <div className='text-2xl font-semibold leading-none'>{value}</div>
+      <div className='mt-1 text-xs text-muted-foreground'>{label}</div>
+    </div>
+  )
+}
+
+function TraceRefBlock({
+  label,
+  refs,
+}: {
+  label: string
+  refs: { id: string; name: string }[]
+}) {
+  return (
+    <div className='min-w-0'>
+      <div className='mb-1 text-xs font-medium text-muted-foreground'>{label}</div>
+      <div className='truncate text-sm'>{formatRefs(refs)}</div>
+    </div>
+  )
+}
+
 type VersionTabProps = {
+  currentBranch: string
+  elements: SysmlElement[]
+  validation: ValidationPayload | null
   branches: Branch[]
   commits: Commit[]
   tags: Tag[]
@@ -5060,6 +6072,8 @@ type VersionTabProps = {
   forceMerge: boolean
   setForceMerge: (value: boolean) => void
   onRefresh: () => void
+  onExport: (format: 'json' | 'xmi') => void
+  onCommit: () => void
   onDiff: () => void
   onAiImpact: () => void
   onRollback: () => void
@@ -5070,6 +6084,24 @@ type VersionTabProps = {
 }
 
 function VersionTab(props: VersionTabProps) {
+  const currentBranch =
+    props.branches.find((item) => item.name === props.currentBranch) ||
+    props.branches[0]
+  const currentCommit = props.commits[0]
+  const requirementCount = props.elements.filter(
+    (item) => item.type === 'Requirement'
+  ).length
+  const blockCount = props.elements.filter((item) => item.type === 'Block').length
+  const issueCount =
+    (props.validation?.summary.errors || 0) +
+    (props.validation?.summary.warnings || 0)
+  const diffLabel = props.diff
+    ? `+${props.diff.summary.added} -${props.diff.summary.removed} ~${props.diff.summary.modified}`
+    : '未运行'
+  const rollbackLabel =
+    props.commits.find((commit) => commit.id === props.rollbackCommit)?.message ||
+    '未选择'
+  const mergeLabel = props.mergeSource || '未选择'
   const commitOptions = [
     { id: 'working', label: 'working' },
     ...props.tags.map((tag) => ({
@@ -5083,8 +6115,98 @@ function VersionTab(props: VersionTabProps) {
   ]
   return (
     <div className='space-y-4'>
-      <Card className='sysml-card'>
-        <CardHeader>
+      <Card className='sysml-card overflow-hidden'>
+        <CardHeader className='bg-muted/20'>
+          <div className='flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between'>
+            <div>
+              <CardTitle>版本状态</CardTitle>
+              <CardDescription>
+                当前分支、模型规模、提交基线和待执行版本操作的集中视图
+              </CardDescription>
+            </div>
+            <div className='flex flex-wrap items-center gap-2'>
+              <Badge variant='secondary'>branch / {props.currentBranch}</Badge>
+              {currentCommit && (
+                <Badge variant='outline'>{shortLabel(currentCommit.id, 14)}</Badge>
+              )}
+              <Button
+                variant='outline'
+                size='sm'
+                className='rounded-xl bg-background'
+                onClick={() => props.onExport('json')}
+                disabled={props.busy === 'export-json'}
+              >
+                <Download className='size-4' />
+                JSON
+              </Button>
+              <Button
+                variant='outline'
+                size='sm'
+                className='rounded-xl bg-background'
+                onClick={() => props.onExport('xmi')}
+                disabled={props.busy === 'export-xmi'}
+              >
+                <Code2 className='size-4' />
+                XMI
+              </Button>
+              <Button
+                size='sm'
+                className='rounded-xl'
+                onClick={props.onCommit}
+                disabled={props.busy === 'commit'}
+              >
+                <GitCommitHorizontal className='size-4' />
+                Commit
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className='space-y-4 p-4'>
+          <div className='grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6'>
+            <LocalMetric label='当前元素' value={props.elements.length} />
+            <LocalMetric label='需求' value={requirementCount} />
+            <LocalMetric label='结构块' value={blockCount} />
+            <LocalMetric label='提交' value={props.commits.length} />
+            <LocalMetric label='标签基线' value={props.tags.length} />
+            <LocalMetric
+              label='校验问题'
+              value={issueCount}
+              tone={
+                props.validation?.summary.errors
+                  ? 'danger'
+                  : issueCount
+                    ? 'warning'
+                    : 'success'
+              }
+            />
+          </div>
+          <div className='grid gap-3 lg:grid-cols-4'>
+            <VersionContextItem
+              label='当前 HEAD'
+              value={currentBranch?.head ? shortLabel(currentBranch.head, 18) : '-'}
+              description={`${currentBranch?.elements ?? props.elements.length} elements / ${currentBranch?.documents ?? 0} docs`}
+            />
+            <VersionContextItem
+              label='Diff 选择'
+              value={`${shortLabel(props.diffFrom, 16)} → ${shortLabel(props.diffTo, 16)}`}
+              description={`结果：${diffLabel}`}
+            />
+            <VersionContextItem
+              label='回滚目标'
+              value={shortLabel(props.rollbackCommit || rollbackLabel, 24)}
+              description={rollbackLabel}
+            />
+            <VersionContextItem
+              label='合并来源'
+              value={mergeLabel}
+              description={props.forceMerge ? '冲突时强制合并' : '普通合并，冲突会阻止写入'}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className='sysml-card overflow-hidden'>
+        <CardHeader className='bg-muted/20'>
           <div className='flex items-center justify-between'>
             <div>
               <CardTitle>版本操作</CardTitle>
@@ -5095,8 +6217,13 @@ function VersionTab(props: VersionTabProps) {
             </Button>
           </div>
         </CardHeader>
-        <CardContent className='grid gap-4 lg:grid-cols-2 2xl:grid-cols-[1.25fr_1.25fr_1fr_1fr_1fr] [&>div]:min-w-0 [&>div]:rounded-md [&>div]:border [&>div]:bg-muted/20 [&>div]:p-3 [&>[data-orientation=horizontal]]:hidden'>
+        <CardContent className='grid gap-3 p-4 lg:grid-cols-2 2xl:grid-cols-[1.25fr_1.25fr_1fr_1fr_1fr] [&>div]:min-w-0 [&>div]:rounded-2xl [&>div]:bg-muted/25 [&>div]:p-4 [&>[data-orientation=horizontal]]:hidden'>
           <div className='grid gap-3'>
+            <VersionActionTitle
+              icon={GitCompare}
+              title='比较'
+              description='选择两个版本查看变化'
+            />
             <div className='grid gap-3 sm:grid-cols-2'>
               <Field label='Diff From'>
                 <Select value={props.diffFrom} onValueChange={props.setDiffFrom}>
@@ -5146,6 +6273,11 @@ function VersionTab(props: VersionTabProps) {
           </div>
           <Separator />
           <div className='grid gap-3'>
+            <VersionActionTitle
+              icon={RotateCcw}
+              title='回滚'
+              description='把工作区恢复到某次提交'
+            />
             <Field label='回滚提交'>
               <Select
                 value={props.rollbackCommit}
@@ -5170,6 +6302,11 @@ function VersionTab(props: VersionTabProps) {
           </div>
           <Separator />
           <div className='grid gap-3'>
+            <VersionActionTitle
+              icon={GitBranch}
+              title='分支'
+              description='创建并行工作线'
+            />
             <Field label='新分支'>
               <Input
                 placeholder='dev-power'
@@ -5184,6 +6321,11 @@ function VersionTab(props: VersionTabProps) {
           </div>
           <Separator />
           <div className='grid gap-3'>
+            <VersionActionTitle
+              icon={FileText}
+              title='标签'
+              description='冻结只读基线'
+            />
             <Field label='标签快照'>
               <Input
                 placeholder='PDR-baseline'
@@ -5205,6 +6347,11 @@ function VersionTab(props: VersionTabProps) {
           </div>
           <Separator />
           <div className='grid gap-3'>
+            <VersionActionTitle
+              icon={GitMerge}
+              title='合并'
+              description='把其他分支并入当前分支'
+            />
             <Field label='合并来源'>
               <Select value={props.mergeSource} onValueChange={props.setMergeSource}>
                 <SelectTrigger className='w-full'>
@@ -5423,6 +6570,48 @@ function DiffGroup({ title, items }: { title: string; items: SysmlElement[] }) {
   )
 }
 
+function VersionContextItem({
+  label,
+  value,
+  description,
+}: {
+  label: string
+  value: string
+  description: string
+}) {
+  return (
+    <div className='rounded-2xl bg-muted/25 p-3'>
+      <div className='text-xs font-medium text-muted-foreground'>{label}</div>
+      <div className='mt-1 truncate text-sm font-semibold'>{value}</div>
+      <p className='mt-1 line-clamp-2 text-xs text-muted-foreground'>
+        {description}
+      </p>
+    </div>
+  )
+}
+
+function VersionActionTitle({
+  icon: Icon,
+  title,
+  description,
+}: {
+  icon: typeof GitCompare
+  title: string
+  description: string
+}) {
+  return (
+    <div className='flex items-start gap-2'>
+      <div className='mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-background text-muted-foreground'>
+        <Icon className='size-3.5' />
+      </div>
+      <div>
+        <div className='text-sm font-semibold'>{title}</div>
+        <p className='text-xs text-muted-foreground'>{description}</p>
+      </div>
+    </div>
+  )
+}
+
 type DocgenTabProps = {
   template: string
   setTemplate: (value: string) => void
@@ -5444,108 +6633,16 @@ type DocgenTabProps = {
 }
 
 function DocgenTab(props: DocgenTabProps) {
-  return (
-    <div className='sysml-doc-grid'>
-      <Card className='sysml-card'>
-        <CardHeader>
-          <div className='flex items-center justify-between gap-3'>
-            <div>
-              <CardTitle>DocGen {'\u6a21\u677f'}</CardTitle>
-              <CardDescription>{'\u4f7f\u7528\u5360\u4f4d\u7b26\u751f\u6210 HTML / Markdown / PDF'}</CardDescription>
-            </div>
-            <div className='flex gap-2'>
-              <DocumentHistorySheet
-                documents={props.documents}
-                onOpen={props.onOpen}
-              />
-              <Button variant='outline' size='sm' onClick={props.onReset}>
-                <RotateCcw className='size-4' />
-              </Button>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className='space-y-4'>
-          <Field label='Document scope'>
-            <Select value={props.docViewId} onValueChange={props.setDocViewId}>
-              <SelectTrigger className='w-full'>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value='all'>Full model document</SelectItem>
-                {props.views.map((view) => (
-                  <SelectItem key={view.id} value={view.id}>
-                    {view.name || view.id}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-          <Suspense
-            fallback={
-              <div className='flex h-[420px] items-center justify-center rounded-md border bg-muted/30 text-sm text-muted-foreground'>
-                <Loader2 className='size-4 animate-spin' />
-                Loading editor
-              </div>
-            }
-          >
-            <DocgenTemplateEditor
-              value={props.template}
-              onChange={props.setTemplate}
-              elements={props.elements}
-              validation={props.validation}
-            />
-          </Suspense>
-          <div className='flex flex-wrap gap-2'>
-            <Button
-              variant='secondary'
-              onClick={() => props.onAiDraft('full')}
-              disabled={props.busy === 'ai-docgen-full'}
-            >
-              {props.busy === 'ai-docgen-full' ? (
-                <Loader2 className='size-4 animate-spin' />
-              ) : (
-                <Sparkles className='size-4' />
-              )}
-              {'AI \u751f\u6210\u7ae0\u8282'}
-            </Button>
-            <Button
-              onClick={props.onGenerate}
-              disabled={props.busy === 'generate-document'}
-            >
-              {props.busy === 'generate-document' ? (
-                <Loader2 className='size-4 animate-spin' />
-              ) : (
-                <FileText className='size-4' />
-              )}
-              {'\u751f\u6210'}
-            </Button>
-            <Button variant='outline' onClick={() => props.onDownload('markdown')}>
-              Markdown
-            </Button>
-            <Button variant='outline' onClick={() => props.onDownload('html')}>
-              HTML
-            </Button>
-            <Button variant='outline' onClick={() => props.onDownload('pdf')}>
-              PDF
-            </Button>
-            <Button
-              variant='secondary'
-              onClick={props.onAiDocumentReview}
-              disabled={!props.currentDocument || props.busy === 'ai-document-review'}
-            >
-              {props.busy === 'ai-document-review' ? (
-                <Loader2 className='size-4 animate-spin' />
-              ) : (
-                <Sparkles className='size-4' />
-              )}
-              AI 质量审查
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+  const selectedView = props.views.find((view) => view.id === props.docViewId)
+  const issueCount =
+    (props.validation?.summary.errors || 0) +
+    (props.validation?.summary.warnings || 0)
+  const scopeLabel = selectedView?.name || selectedView?.id || 'Full model'
 
-      <Card className='sysml-card overflow-hidden'>
-        <CardHeader>
+  return (
+    <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]'>
+      <Card className='sysml-card min-h-[760px] overflow-hidden'>
+        <CardHeader className='bg-muted/20'>
           <div className='flex items-center justify-between gap-3'>
             <div>
               <CardTitle>{'\u6587\u6863\u9884\u89c8'}</CardTitle>
@@ -5571,34 +6668,208 @@ function DocgenTab(props: DocgenTabProps) {
         </CardContent>
       </Card>
 
-      <Card className='sysml-card'>
-        <CardHeader>
-          <div className='flex items-center justify-between gap-3'>
+      <div className='space-y-4'>
+        <Card className='sysml-card overflow-hidden'>
+          <CardHeader className='bg-muted/20'>
             <div>
-              <CardTitle>AI 文档质量审查</CardTitle>
+              <CardTitle>文档控制台</CardTitle>
               <CardDescription>
-                {props.aiDocumentReview?.document_id || '生成或打开文档后可运行质量评分'}
+                选择范围、生成文档、下载和质量审查。
               </CardDescription>
             </div>
-            <Badge variant='outline'>Quality</Badge>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {props.busy === 'ai-document-review' ? (
-            <div className='flex items-center gap-2 text-sm text-muted-foreground'>
-              <Loader2 className='size-4 animate-spin' />
-              正在审查文档质量
+          </CardHeader>
+          <CardContent className='space-y-4 p-4'>
+            <div className='grid grid-cols-2 gap-2'>
+              <LocalMetric label='范围元素' value={props.elements.length} />
+              <LocalMetric label='历史文档' value={props.documents.length} />
+              <LocalMetric
+                label='校验问题'
+                value={issueCount}
+                tone={props.validation?.summary.errors ? 'danger' : issueCount ? 'warning' : 'success'}
+              />
+              <LocalMetric label='可用视图' value={props.views.length} />
             </div>
-          ) : props.aiDocumentReview ? (
-            <div className='rounded-md border bg-muted/20 p-4'>
-              <MarkdownMessage content={props.aiDocumentReview.review} />
+            <div className='rounded-2xl bg-muted/25 p-3 text-sm'>
+              <div className='text-xs text-muted-foreground'>当前生成范围</div>
+              <div className='mt-1 truncate font-medium'>{scopeLabel}</div>
             </div>
-          ) : (
-            <EmptyState title='尚未运行文档质量审查' description='先生成文档，再点击 AI 质量审查' />
-          )}
-        </CardContent>
-      </Card>
+
+            <Field label='文档范围'>
+              <Select value={props.docViewId} onValueChange={props.setDocViewId}>
+                <SelectTrigger className='w-full'>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value='all'>Full model document</SelectItem>
+                  {props.views.map((view) => (
+                    <SelectItem key={view.id} value={view.id}>
+                      {view.name || view.id}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+
+            <div className='grid gap-2'>
+              <Button
+                onClick={props.onGenerate}
+                disabled={props.busy === 'generate-document'}
+              >
+                {props.busy === 'generate-document' ? (
+                  <Loader2 className='size-4 animate-spin' />
+                ) : (
+                  <FileText className='size-4' />
+                )}
+                生成文档
+              </Button>
+              <Button
+                variant='secondary'
+                onClick={() => props.onAiDraft('full')}
+                disabled={props.busy === 'ai-docgen-full'}
+              >
+                {props.busy === 'ai-docgen-full' ? (
+                  <Loader2 className='size-4 animate-spin' />
+                ) : (
+                  <Sparkles className='size-4' />
+                )}
+                AI 生成章节
+              </Button>
+            </div>
+
+            <div className='grid grid-cols-3 gap-2'>
+              <Button variant='outline' onClick={() => props.onDownload('markdown')}>
+                MD
+              </Button>
+              <Button variant='outline' onClick={() => props.onDownload('html')}>
+                HTML
+              </Button>
+              <Button variant='outline' onClick={() => props.onDownload('pdf')}>
+                PDF
+              </Button>
+            </div>
+
+            <div className='grid grid-cols-2 gap-2'>
+              <DocumentHistorySheet
+                documents={props.documents}
+                onOpen={props.onOpen}
+              />
+              <Button variant='outline' onClick={props.onReset}>
+                <RotateCcw className='size-4' />
+                重置模板
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className='sysml-card overflow-hidden'>
+          <CardHeader className='bg-muted/20'>
+            <div className='flex items-center justify-between gap-3'>
+              <div>
+                <CardTitle>模板编辑</CardTitle>
+                <CardDescription>高级配置，默认不占主屏。</CardDescription>
+              </div>
+              <DocTemplateSheet
+                template={props.template}
+                setTemplate={props.setTemplate}
+                elements={props.elements}
+                validation={props.validation}
+              />
+            </div>
+          </CardHeader>
+          <CardContent className='p-4 text-sm text-muted-foreground'>
+            当前模板通过占位符生成 Requirements、Blocks、Traceability 和 Validation 章节。
+          </CardContent>
+        </Card>
+
+        <Card className='sysml-card overflow-hidden'>
+          <CardHeader className='bg-muted/20'>
+            <div className='flex items-center justify-between gap-3'>
+              <div>
+                <CardTitle>质量审查</CardTitle>
+                <CardDescription>
+                  {props.aiDocumentReview?.document_id || '生成或打开文档后可运行质量评分'}
+                </CardDescription>
+              </div>
+              <Button
+                variant='outline'
+                size='sm'
+                onClick={props.onAiDocumentReview}
+                disabled={!props.currentDocument || props.busy === 'ai-document-review'}
+              >
+                {props.busy === 'ai-document-review' ? (
+                  <Loader2 className='size-4 animate-spin' />
+                ) : (
+                  <Sparkles className='size-4' />
+                )}
+                审查
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {props.busy === 'ai-document-review' ? (
+              <div className='flex items-center gap-2 text-sm text-muted-foreground'>
+                <Loader2 className='size-4 animate-spin' />
+                正在审查文档质量
+              </div>
+            ) : props.aiDocumentReview ? (
+              <div className='max-h-72 overflow-auto rounded-2xl bg-muted/25 p-4'>
+                <MarkdownMessage content={props.aiDocumentReview.review} />
+              </div>
+            ) : (
+              <EmptyState title='尚未审查' description='先生成文档，再点击审查' />
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
+  )
+}
+
+function DocTemplateSheet({
+  template,
+  setTemplate,
+  elements,
+  validation,
+}: {
+  template: string
+  setTemplate: (value: string) => void
+  elements: SysmlElement[]
+  validation: ValidationPayload | null
+}) {
+  return (
+    <Sheet>
+      <SheetTrigger asChild>
+        <Button variant='outline' size='sm'>
+          <Code2 className='size-4' />
+          编辑模板
+        </Button>
+      </SheetTrigger>
+      <SheetContent side='left' className='w-[680px] gap-0 sm:max-w-[680px]'>
+        <SheetHeader>
+          <SheetTitle>DocGen 模板</SheetTitle>
+          <SheetDescription>
+            使用占位符生成 HTML / Markdown / PDF。
+          </SheetDescription>
+        </SheetHeader>
+        <div className='min-h-0 flex-1 overflow-auto px-4 pb-4'>
+          <Suspense
+            fallback={
+              <div className='flex h-[420px] items-center justify-center rounded-2xl bg-muted/30 text-sm text-muted-foreground'>
+                <Loader2 className='size-4 animate-spin' />
+                Loading editor
+              </div>
+            }
+          >
+            <DocgenTemplateEditor
+              value={template}
+              onChange={setTemplate}
+              elements={elements}
+              validation={validation}
+            />
+          </Suspense>
+        </div>
+      </SheetContent>
+    </Sheet>
   )
 }
 
@@ -5897,6 +7168,14 @@ function MdkTab(props: MdkTabProps) {
   const selectedAdapter = props.adapters.find((adapter) => adapter.id === props.tool)
   const report = props.parseResult?.mapping_report
   const canApply = Boolean(props.importJob && props.importJob.status === 'parsed')
+  const hasSource = Boolean(props.content.trim())
+  const activeStep = props.importJob
+    ? 4
+    : props.parseResult
+      ? 3
+      : hasSource
+        ? 2
+        : 1
 
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
@@ -5912,15 +7191,15 @@ function MdkTab(props: MdkTabProps) {
   }
 
   return (
-    <div className='grid gap-4 xl:grid-cols-[minmax(360px,0.42fr)_minmax(560px,0.58fr)]'>
+    <div className='grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]'>
       <div className='space-y-4'>
-        <Card className='sysml-card'>
-          <CardHeader>
+        <Card className='sysml-card overflow-hidden'>
+          <CardHeader className='bg-muted/20'>
             <div className='flex items-center justify-between gap-3'>
               <div>
-                <CardTitle>外部工具适配器</CardTitle>
+                <CardTitle>来源选择</CardTitle>
                 <CardDescription>
-                  Cameo / Jupyter / MATLAB / JSON / XMI 的统一接入能力
+                  选择外部工具格式，再上传或粘贴模型内容。
                 </CardDescription>
               </div>
               <Button
@@ -5937,42 +7216,70 @@ function MdkTab(props: MdkTabProps) {
               </Button>
             </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className='space-y-4 p-4'>
+            {selectedAdapter ? (
+              <div className='rounded-2xl bg-muted/25 p-4'>
+                <div className='flex items-start justify-between gap-3'>
+                  <div>
+                    <div className='font-semibold'>{selectedAdapter.label}</div>
+                    <p className='mt-1 font-mono text-xs text-muted-foreground'>
+                      {selectedAdapter.id} / {selectedAdapter.vendor || 'SysML DocGen'} / v
+                      {selectedAdapter.version || '1.0.0'}
+                    </p>
+                  </div>
+                  <Badge variant={selectedAdapter.can_write ? 'secondary' : 'outline'}>
+                    {selectedAdapter.can_write ? 'read/write' : 'read only'}
+                  </Badge>
+                </div>
+                <div className='mt-3 flex flex-wrap gap-1.5'>
+                  <CapabilityBadge enabled={selectedAdapter.can_read} label='读' />
+                  <CapabilityBadge enabled={selectedAdapter.can_write} label='写' />
+                  <CapabilityBadge enabled={selectedAdapter.can_validate} label='校验' />
+                  <CapabilityBadge enabled={selectedAdapter.can_commit} label='提交' />
+                  <CapabilityBadge enabled={selectedAdapter.can_rollback} label='回滚' />
+                </div>
+                <p className='mt-3 text-xs text-muted-foreground'>
+                  支持扩展名：
+                  {(selectedAdapter.supported_extensions || selectedAdapter.formats).join(', ')}
+                </p>
+                {selectedAdapter.limitations?.length ? (
+                  <p className='mt-2 text-xs text-muted-foreground'>
+                    限制：{selectedAdapter.limitations.join('；')}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
             {props.adapters.length ? (
-              <div className='grid gap-3'>
+              <div className='space-y-1'>
+                <div className='px-1 text-xs font-medium uppercase text-muted-foreground'>
+                  可用适配器
+                </div>
                 {props.adapters.map((adapter) => (
                   <button
                     key={adapter.id}
                     type='button'
                     onClick={() => props.setTool(adapter.id)}
                     className={cn(
-                      'rounded-md border p-3 text-left transition-colors hover:bg-muted/50',
-                      props.tool === adapter.id && 'border-primary bg-muted'
+                      'relative w-full rounded-2xl p-3 text-left transition-colors hover:bg-muted/55',
+                      props.tool === adapter.id && 'bg-muted'
                     )}
                   >
-                    <div className='flex flex-wrap items-center justify-between gap-2'>
-                      <div>
-                        <div className='font-medium'>{adapter.label}</div>
-                        <div className='font-mono text-xs text-muted-foreground'>
-                          {adapter.id} / {adapter.vendor || 'SysML DocGen'} / v{adapter.version || '1.0.0'}
+                    <span
+                      className={cn(
+                        'absolute left-0 top-3 h-8 w-1 rounded-full bg-transparent',
+                        props.tool === adapter.id && 'bg-primary'
+                      )}
+                    />
+                    <div className='flex items-center justify-between gap-3'>
+                      <div className='min-w-0'>
+                        <div className='truncate text-sm font-medium'>{adapter.label}</div>
+                        <div className='truncate font-mono text-xs text-muted-foreground'>
+                          {(adapter.supported_extensions || adapter.formats).join(', ')}
                         </div>
                       </div>
-                      <Badge variant={adapter.can_write ? 'secondary' : 'outline'}>
-                        {adapter.can_write ? 'read/write' : 'read only'}
-                      </Badge>
+                      <Badge variant='outline'>{adapter.can_write ? '写' : '读'}</Badge>
                     </div>
-                    <div className='mt-3 flex flex-wrap gap-1.5'>
-                      <CapabilityBadge enabled={adapter.can_read} label='读' />
-                      <CapabilityBadge enabled={adapter.can_write} label='写' />
-                      <CapabilityBadge enabled={adapter.can_validate} label='校验' />
-                      <CapabilityBadge enabled={adapter.can_commit} label='提交' />
-                      <CapabilityBadge enabled={adapter.can_rollback} label='回滚' />
-                    </div>
-                    {adapter.limitations?.length ? (
-                      <p className='mt-2 line-clamp-2 text-xs text-muted-foreground'>
-                        {adapter.limitations.join('；')}
-                      </p>
-                    ) : null}
                   </button>
                 ))}
               </div>
@@ -5981,130 +7288,138 @@ function MdkTab(props: MdkTabProps) {
             )}
           </CardContent>
         </Card>
-
-        <Card className='sysml-card'>
-          <CardHeader>
-            <CardTitle>导入设置</CardTitle>
-            <CardDescription>
-              解析成功后可导入当前项目分支，并选择是否自动提交
-            </CardDescription>
-          </CardHeader>
-          <CardContent className='space-y-4'>
-            <Field label='适配器'>
-              <Select value={props.tool} onValueChange={props.setTool}>
-                <SelectTrigger className='w-full'>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {props.adapters.map((adapter) => (
-                    <SelectItem key={adapter.id} value={adapter.id}>
-                      {adapter.label}
-                    </SelectItem>
-                  ))}
-                  {!props.adapters.length && <SelectItem value='json'>JSON</SelectItem>}
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field label='文件名'>
-              <Input
-                value={props.filename}
-                onChange={(event) => props.setFilename(event.target.value)}
-                placeholder='model.json / model.xmi / analysis.ipynb'
-              />
-            </Field>
-            <label className='flex items-center gap-2 text-sm'>
-              <Checkbox
-                checked={props.commit}
-                onCheckedChange={(checked) => props.setCommit(Boolean(checked))}
-              />
-              导入后自动提交
-            </label>
-            <Field label='提交说明'>
-              <Input
-                value={props.message}
-                onChange={(event) => props.setMessage(event.target.value)}
-                disabled={!props.commit}
-              />
-            </Field>
-            {selectedAdapter && (
-              <Alert>
-                <Wrench className='size-4' />
-                <AlertTitle>{selectedAdapter.label}</AlertTitle>
-                <AlertDescription>
-                  扩展名：{(selectedAdapter.supported_extensions || selectedAdapter.formats).join(', ')}
-                  ；能力：{adapterCapabilityText(selectedAdapter)}
-                </AlertDescription>
-              </Alert>
-            )}
-          </CardContent>
-        </Card>
       </div>
 
       <div className='space-y-4'>
-        <Card className='sysml-card'>
-          <CardHeader>
-            <div className='flex items-center justify-between gap-3'>
+        <Card className='sysml-card overflow-hidden'>
+          <CardHeader className='bg-muted/20'>
+            <div className='flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between'>
               <div>
-                <CardTitle>模型内容解析</CardTitle>
-                <CardDescription>上传文件或粘贴 JSON、XMI、Notebook、MATLAB 标记内容</CardDescription>
+                <CardTitle>外部模型导入向导</CardTitle>
+                <CardDescription>
+                  按步骤完成：选择来源、解析检查、创建任务、确认导入。
+                </CardDescription>
               </div>
-              <div className='flex gap-2'>
-                <Button variant='outline' asChild>
-                  <label>
-                    <Upload className='size-4' />
-                    上传并解析
-                    <input
-                      type='file'
-                      className='hidden'
-                      accept='.json,.xmi,.xml,.ipynb,.m,.mlx'
-                      onChange={handleFileChange}
-                    />
-                  </label>
-                </Button>
-                <Button
-                  variant='outline'
-                  onClick={() => props.onParse()}
-                  disabled={props.busy === 'mdk-parse'}
-                >
-                  {props.busy === 'mdk-parse' ? (
-                    <Loader2 className='size-4 animate-spin' />
-                  ) : (
-                    <Search className='size-4' />
-                  )}
-                  重新解析
-                </Button>
-                <Button
-                  variant='outline'
-                  onClick={props.onCreateJob}
-                  disabled={props.busy === 'mdk-job'}
-                >
-                  {props.busy === 'mdk-job' ? (
-                    <Loader2 className='size-4 animate-spin' />
-                  ) : (
-                    <Archive className='size-4' />
-                  )}
-                  创建任务
-                </Button>
-                <Button
-                  onClick={props.onApplyJob}
-                  disabled={!canApply || props.busy === 'mdk-apply'}
-                >
-                  {props.busy === 'mdk-apply' ? (
-                    <Loader2 className='size-4 animate-spin' />
-                  ) : (
-                    <Save className='size-4' />
-                  )}
-                  确认导入
-                </Button>
-              </div>
+              <MdkStepBar activeStep={activeStep} />
             </div>
           </CardHeader>
-          <CardContent className='space-y-4'>
-            <Textarea
-              className='min-h-[340px] font-mono text-xs'
-              value={props.content}
-              onChange={(event) => props.setContent(event.target.value)}
-            />
+          <CardContent className='space-y-4 p-4'>
+            <div className='grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]'>
+              <div className='rounded-2xl bg-muted/25 p-4'>
+                <div className='flex flex-col gap-4 md:flex-row md:items-center md:justify-between'>
+                  <div>
+                    <div className='text-sm font-semibold'>选择文件并解析</div>
+                    <p className='mt-1 text-xs text-muted-foreground'>
+                      支持 JSON、XMI、Notebook、MATLAB 标记文件。上传后会自动选择适配器并解析。
+                    </p>
+                    {props.filename ? (
+                      <div className='mt-3 font-mono text-xs text-muted-foreground'>
+                        当前文件：{props.filename}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className='flex flex-wrap gap-2'>
+                    <Button asChild>
+                      <label>
+                        <Upload className='size-4' />
+                        上传并解析
+                        <input
+                          type='file'
+                          className='hidden'
+                          accept='.json,.xmi,.xml,.ipynb,.m,.mlx'
+                          onChange={handleFileChange}
+                        />
+                      </label>
+                    </Button>
+                    <Button
+                      variant='outline'
+                      onClick={() => props.onParse()}
+                      disabled={!hasSource || props.busy === 'mdk-parse'}
+                    >
+                      {props.busy === 'mdk-parse' ? (
+                        <Loader2 className='size-4 animate-spin' />
+                      ) : (
+                        <Search className='size-4' />
+                      )}
+                      重新解析
+                    </Button>
+                  </div>
+                </div>
+
+                <Collapsible className='mt-4'>
+                  <CollapsibleTrigger asChild>
+                    <Button variant='ghost' size='sm'>
+                      <Code2 className='size-4' />
+                      高级：粘贴外部模型内容
+                    </Button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className='mt-3 space-y-3'>
+                    <Field label='文件名'>
+                      <Input
+                        value={props.filename}
+                        onChange={(event) => props.setFilename(event.target.value)}
+                        placeholder='model.json / model.xmi / analysis.ipynb'
+                      />
+                    </Field>
+                    <Textarea
+                      className='min-h-[260px] font-mono text-xs'
+                      value={props.content}
+                      onChange={(event) => props.setContent(event.target.value)}
+                      placeholder='粘贴 JSON、XMI、Notebook 或 MATLAB 标记内容'
+                    />
+                  </CollapsibleContent>
+                </Collapsible>
+              </div>
+
+              <div className='rounded-2xl bg-muted/25 p-4'>
+                <div className='text-sm font-semibold'>导入确认</div>
+                <p className='mt-1 text-xs text-muted-foreground'>
+                  解析无误后创建任务，再确认写入当前项目分支。
+                </p>
+                <div className='mt-4 space-y-3'>
+                  <label className='flex items-center gap-2 text-sm'>
+                    <Checkbox
+                      checked={props.commit}
+                      onCheckedChange={(checked) => props.setCommit(Boolean(checked))}
+                    />
+                    导入后自动提交
+                  </label>
+                  <Field label='提交说明'>
+                    <Input
+                      value={props.message}
+                      onChange={(event) => props.setMessage(event.target.value)}
+                      disabled={!props.commit}
+                    />
+                  </Field>
+                  <div className='grid gap-2'>
+                    <Button
+                      variant='outline'
+                      onClick={props.onCreateJob}
+                      disabled={!props.parseResult || props.busy === 'mdk-job'}
+                    >
+                      {props.busy === 'mdk-job' ? (
+                        <Loader2 className='size-4 animate-spin' />
+                      ) : (
+                        <Archive className='size-4' />
+                      )}
+                      创建导入任务
+                    </Button>
+                    <Button
+                      onClick={props.onApplyJob}
+                      disabled={!canApply || props.busy === 'mdk-apply'}
+                    >
+                      {props.busy === 'mdk-apply' ? (
+                        <Loader2 className='size-4 animate-spin' />
+                      ) : (
+                        <Save className='size-4' />
+                      )}
+                      确认导入
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {props.parseResult && (
               <div className='grid gap-3 sm:grid-cols-4'>
                 <MdkMetric label='元素' value={props.parseResult.parsed_model.element_count} />
@@ -6150,8 +7465,8 @@ function MdkTab(props: MdkTabProps) {
           </Card>
         )}
 
-        <Card className='sysml-card'>
-          <CardHeader>
+        <Card className='sysml-card overflow-hidden'>
+          <CardHeader className='bg-muted/20'>
             <div className='flex items-center justify-between gap-3'>
               <div>
                 <CardTitle>映射报告</CardTitle>
@@ -6202,7 +7517,9 @@ function MdkTab(props: MdkTabProps) {
                 </div>
               </div>
             ) : (
-              <EmptyState title='等待解析' description='粘贴外部模型内容后点击解析' />
+              <div className='rounded-2xl bg-muted/25 p-4 text-sm text-muted-foreground'>
+                等待解析。上传文件或展开高级粘贴内容后，点击解析即可查看映射报告。
+              </div>
             )}
           </CardContent>
         </Card>
@@ -6262,6 +7579,43 @@ function CapabilityBadge({ enabled, label }: { enabled: boolean; label: string }
   )
 }
 
+function MdkStepBar({ activeStep }: { activeStep: number }) {
+  const steps = ['选择来源', '解析检查', '创建任务', '确认导入']
+
+  return (
+    <div className='flex flex-wrap gap-2'>
+      {steps.map((step, index) => {
+        const number = index + 1
+        const active = activeStep === number
+        const done = activeStep > number
+        return (
+          <div
+            key={step}
+            className={cn(
+              'flex items-center gap-2 rounded-full px-3 py-1.5 text-xs',
+              done || active
+                ? 'bg-primary text-primary-foreground'
+                : 'bg-muted text-muted-foreground'
+            )}
+          >
+            <span
+              className={cn(
+                'flex size-5 items-center justify-center rounded-full text-[10px]',
+                done || active
+                  ? 'bg-primary-foreground/20'
+                  : 'bg-background text-muted-foreground'
+              )}
+            >
+              {number}
+            </span>
+            {step}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function MdkMetric({ label, value }: { label: string; value: number }) {
   return (
     <div className='rounded-md border bg-muted/25 p-3'>
@@ -6301,17 +7655,6 @@ function MappingReportGroup({
       )}
     </div>
   )
-}
-
-function adapterCapabilityText(adapter: MdkAdapter) {
-  const labels = [
-    adapter.can_read && '读',
-    adapter.can_write && '写',
-    adapter.can_validate && '校验',
-    adapter.can_commit && '提交',
-    adapter.can_rollback && '回滚',
-  ].filter(Boolean)
-  return labels.join('、') || '无'
 }
 
 function adapterFromFilename(filename: string, adapters: MdkAdapter[]) {

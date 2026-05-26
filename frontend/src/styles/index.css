@@ -192,13 +192,13 @@
 }
 
 .sysml-card {
-  border-color: var(--workbench-line);
-  background: color-mix(in oklch, var(--background) 95%, white 5%);
-  box-shadow: 0 10px 28px color-mix(in oklch, var(--foreground) 6%, transparent);
+  border-color: color-mix(in oklch, var(--workbench-line) 48%, transparent);
+  background: color-mix(in oklch, var(--background) 97%, var(--muted) 3%);
+  box-shadow: 0 8px 22px color-mix(in oklch, var(--foreground) 4%, transparent);
 }
 
 .dark .sysml-card {
-  background: color-mix(in oklch, var(--background) 92%, white 4%);
+  background: color-mix(in oklch, var(--background) 94%, white 3%);
 }
 
 .sysml-metric {
@@ -216,9 +216,9 @@
 }
 
 .sysml-tabs {
-  border: 1px solid var(--workbench-line);
-  background: color-mix(in oklch, var(--background) 88%, transparent);
-  box-shadow: 0 12px 34px color-mix(in oklch, var(--foreground) 7%, transparent);
+  border: 1px solid color-mix(in oklch, var(--workbench-line) 42%, transparent);
+  background: color-mix(in oklch, var(--background) 92%, transparent);
+  box-shadow: 0 8px 24px color-mix(in oklch, var(--foreground) 4%, transparent);
 }
 
 .sysml-tabs [role='tab'] {
@@ -228,7 +228,7 @@
 .sysml-doc-grid {
   display: grid;
   gap: 1rem;
-  grid-template-columns: minmax(520px, 0.9fr) minmax(520px, 1.1fr);
+  grid-template-columns: minmax(420px, 0.7fr) minmax(560px, 1.3fr);
 }
 
 @media (max-width: 1280px) {
